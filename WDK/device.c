@@ -99,10 +99,14 @@ Return Value:
     
 --*/      
 {
-    UNREFERENCED_PARAMETER(_Device);  
-    UNREFERENCED_PARAMETER(_PowerState);      
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnableWakeControl entry device=%p powerState=%d",
+            _Device, _PowerState));
     
-    return STATUS_SUCCESS;
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnableWakeControl exit status=%!STATUS!", Status));
+
+    return Status;
 }
 
 VOID
@@ -126,7 +130,8 @@ Return Value:
     
 --*/     
 {
-    UNREFERENCED_PARAMETER(_Device);
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDisableWakeControl entry device=%p", _Device));
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDisableWakeControl exit device=%p", _Device));
    
     return;
 }
@@ -160,16 +165,18 @@ Return Value:
 
 --*/    
 {
-    UNREFERENCED_PARAMETER(_FdoExtension);    
-    UNREFERENCED_PARAMETER(_IoTargetSerial);
-    UNREFERENCED_PARAMETER(_RequestSync);
-    UNREFERENCED_PARAMETER(_IsUartReset);    
+    BOOLEAN Initialized = TRUE;
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
+            _FdoExtension, _IoTargetSerial, _RequestSync, _IsUartReset));
 
     //
     // Vendor specifc operation;
     // 
 
-    return TRUE;
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize exit initialized=%d", Initialized));
+
+    return Initialized;
 }
 
 NTSTATUS
@@ -198,10 +205,13 @@ Return Value:
 --*/
 
 {
-    UNREFERENCED_PARAMETER(_Device);  
-    UNREFERENCED_PARAMETER(_IsEnabled);  
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnable entry device=%p enabled=%d", _Device, _IsEnabled));
     
-    return STATUS_SUCCESS;
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnable exit status=%!STATUS!", Status));
+
+    return Status;
 }
 
 
@@ -225,9 +235,13 @@ Return Value:
 
 --*/
 {
-    UNREFERENCED_PARAMETER(_Device);    
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOn entry device=%p", _Device));
     
-    return STATUS_SUCCESS;
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOn exit status=%!STATUS!", Status));
+
+    return Status;
 }
 
 NTSTATUS 
@@ -250,9 +264,13 @@ Return Value:
 
 --*/
 {
-    UNREFERENCED_PARAMETER(_Device);    
+    NTSTATUS Status = STATUS_SUCCESS;
     
-    return STATUS_SUCCESS;
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOff entry device=%p", _Device));
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOff exit status=%!STATUS!", Status));
+
+    return Status;
 }
 
 _Use_decl_annotations_
@@ -276,5 +294,6 @@ Return Value:
 
 --*/
 {
-    UNREFERENCED_PARAMETER(_Fdo);
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR entry fdo=%p", _Fdo));
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR exit fdo=%p", _Fdo));
 }

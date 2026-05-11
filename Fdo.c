@@ -23,6 +23,67 @@ Environment:
 
 #define BTHX_VALID_WRITE_PACKET_TYPE(type) (type == HciPacketCommand || type == HciPacketAclData)
 #define BTHX_VALID_READ_PACKET_TYPE(type)  (type == HciPacketEvent   || type == HciPacketAclData)
+#define HCI_TRACE_BYTE_LIMIT 16
+
+static
+VOID
+TraceHciTxSummary(
+    _In_ PBTHX_HCI_READ_WRITE_CONTEXT _HCIContext,
+    _In_ ULONG _UartLength,
+    _In_ ULONG _PayloadAvailable
+    )
+{
+    UCHAR TraceBytes[HCI_TRACE_BYTE_LIMIT] = {0};
+    ULONG BytesToTrace = 0;
+    ULONG Index;
+    ULONG Opcode = 0;
+    const ULONG HciCommandHeaderLength = (ULONG) HCI_COMMAND_HEADER_LEN;
+
+    if (_HCIContext->DataLen && _PayloadAvailable) {
+        BytesToTrace = MinToPrint(MinToPrint(_HCIContext->DataLen, _PayloadAvailable), HCI_TRACE_BYTE_LIMIT);
+        for (Index = 0; Index < BytesToTrace; Index++) {
+            TraceBytes[Index] = _HCIContext->Data[Index];
+        }
+    }
+
+    if (_HCIContext->Type == (UCHAR) HciPacketCommand) {
+        if (_HCIContext->DataLen >= HciCommandHeaderLength &&
+            _PayloadAvailable >= HciCommandHeaderLength) {
+            Opcode = ((ULONG)_HCIContext->Data[1] << 8) | _HCIContext->Data[0];
+            DoTrace(LEVEL_INFO, TFLAG_HCI, ("HCI_TX summary type=%d hciLen=%d uartLen=%d opcode=0x%x",
+                    _HCIContext->Type, _HCIContext->DataLen, _UartLength, Opcode));
+        }
+        else {
+            DoTrace(LEVEL_WARNING, TFLAG_HCI, ("HCI_TX summary type=%d hciLen=%d uartLen=%d payloadAvailable=%d opcode=short",
+                    _HCIContext->Type, _HCIContext->DataLen, _UartLength, _PayloadAvailable));
+        }
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_HCI, ("HCI_TX summary type=%d hciLen=%d uartLen=%d opcode=none",
+                _HCIContext->Type, _HCIContext->DataLen, _UartLength));
+    }
+
+    DoTrace(LEVEL_VERBOSE, TFLAG_HCI, ("HCI_TX bytes type=%d hciLen=%d bytesLogged=%d data=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+            _HCIContext->Type,
+            _HCIContext->DataLen,
+            BytesToTrace,
+            TraceBytes[0],
+            TraceBytes[1],
+            TraceBytes[2],
+            TraceBytes[3],
+            TraceBytes[4],
+            TraceBytes[5],
+            TraceBytes[6],
+            TraceBytes[7],
+            TraceBytes[8],
+            TraceBytes[9],
+            TraceBytes[10],
+            TraceBytes[11],
+            TraceBytes[12],
+            TraceBytes[13],
+            TraceBytes[14],
+            TraceBytes[15]));
+}
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, FdoCreateOneChildDevice)
@@ -239,7 +300,7 @@ Returns:
 
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, ("+ FdoCreateOneChildDevice() HWID: %S", _HardwareIds));
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO create_child FdoCreateOneChildDevice entry hwid=%S serialNo=%d", _HardwareIds, _SerialNo));
 
     //
     // First make sure that we don't already have another device with the
@@ -289,6 +350,7 @@ Returns:
         if (_SerialNo == PdoExtension->SerialNo) {
             IsUnique = FALSE;
             Status = STATUS_INVALID_PARAMETER;
+            DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_child duplicate serialNo=%d status=%!STATUS!", _SerialNo, Status));
             break;
         }
     }
@@ -305,7 +367,12 @@ Returns:
     WdfFdoUnlockStaticChildListFromIteration(_Device);
     WdfWaitLockRelease(FdoExtension->ChildLock);
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, ("- FdoCreateOneChildDevice() %!STATUS!", Status));
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_child FdoCreateOneChildDevice failed serialNo=%d status=%!STATUS!", _SerialNo, Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO create_child FdoCreateOneChildDevice exit serialNo=%d status=%!STATUS!", _SerialNo, Status));
+    }
 
     return Status;
 }
@@ -415,7 +482,7 @@ Returns:
 
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, (" + FdoCreateAllChildren"));
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO create_children FdoCreateAllChildren entry"));
 
     //
     // Bus driver enumerates all child devnode in this function.
@@ -434,6 +501,13 @@ Returns:
     FdoExtension = FdoGetExtension(_Device);
     if (NT_SUCCESS(Status)) {
         FdoExtension->IsRadioEnabled = TRUE;
+    }
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children FdoCreateAllChildren failed status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO create_children FdoCreateAllChildren exit status=%!STATUS!", Status));
     }
 
     return Status;
@@ -553,8 +627,8 @@ Return Value:
 
 --*/
 {
-    UNREFERENCED_PARAMETER(_Device);
-    DoTrace(LEVEL_INFO, TFLAG_PNP,(" FdoEvtDeviceDisarmWake"));
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceDisarmWake entry device=%p", _Device));
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceDisarmWake exit device=%p", _Device));
 }
 
 NTSTATUS
@@ -579,9 +653,8 @@ Return Value:
 --*/
 {
     NTSTATUS Status = STATUS_SUCCESS;
-    UNREFERENCED_PARAMETER(_Device);
-
-    DoTrace(LEVEL_INFO, TFLAG_PNP,(" FdoEvtDeviceArmWake"));
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceArmWake entry device=%p", _Device));
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceArmWake exit device=%p status=%!STATUS!", _Device, Status));
 
     return Status;
 }
@@ -629,7 +702,7 @@ Return Value:
 
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+FdoFindConnectResources"));
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery FdoFindConnectResources entry device=%p", _Device));
 
     FdoExtension = FdoGetExtension(_Device);
 
@@ -640,6 +713,7 @@ Return Value:
     //
 
     ResourceCount = WdfCmResourceListGetCount(_ResourcesTranslated);
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery translatedCount=%d", ResourceCount));
 
     for (Index = 0; Index < ResourceCount; Index++)
     {
@@ -665,7 +739,7 @@ Return Value:
                 FdoExtension->UARTConnectionId.LowPart  = Descriptor->u.Connection.IdLowPart;
                 FdoExtension->UARTConnectionId.HighPart = Descriptor->u.Connection.IdHighPart;
 
-                DoTrace(LEVEL_INFO, TFLAG_PNP,(" UART ConnectionID (0x%x, 0x%x)",
+                DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery UART ConnectionID high=0x%x low=0x%x",
                     FdoExtension->UARTConnectionId.HighPart, FdoExtension->UARTConnectionId.LowPart));
             }
             else if ((Descriptor->u.Connection.Class == CM_RESOURCE_CONNECTION_CLASS_SERIAL) &&
@@ -675,7 +749,7 @@ Return Value:
                 FdoExtension->I2CConnectionId.LowPart  = Descriptor->u.Connection.IdLowPart;
                 FdoExtension->I2CConnectionId.HighPart = Descriptor->u.Connection.IdHighPart;
 
-                DoTrace(LEVEL_INFO, TFLAG_PNP,(" I2C ConnectionID (0x%x, 0x%x)",
+                DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery I2C ConnectionID high=0x%x low=0x%x",
                     FdoExtension->I2CConnectionId.HighPart, FdoExtension->I2CConnectionId.LowPart));
             }
             else if ((Descriptor->u.Connection.Class == CM_RESOURCE_CONNECTION_CLASS_GPIO) &&
@@ -685,7 +759,7 @@ Return Value:
                 FdoExtension->GPIOConnectionId.LowPart  = Descriptor->u.Connection.IdLowPart;
                 FdoExtension->GPIOConnectionId.HighPart = Descriptor->u.Connection.IdHighPart;
 
-                DoTrace(LEVEL_INFO, TFLAG_PNP,(" GPIO ConnectionID (0x%x, 0x%x)",
+                DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery GPIO ConnectionID high=0x%x low=0x%x",
                     FdoExtension->GPIOConnectionId.HighPart, FdoExtension->GPIOConnectionId.LowPart));
             }
             break;
@@ -697,7 +771,7 @@ Return Value:
             //
 
         default:
-            DoTrace(LEVEL_INFO, TFLAG_PNP,(" Resource type %d not used.", Descriptor->Type));
+            DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery unused type=%d", Descriptor->Type));
             break;
         }
 
@@ -709,9 +783,10 @@ Return Value:
     if (!UartConnectionIdIsFound)
     {
         Status = STATUS_NOT_FOUND;
+        DoTrace(LEVEL_WARNING, TFLAG_PNP,("PNP resource_discovery UART ConnectionID not found status=%!STATUS!", Status));
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("-FdoFindConnectResources ResourceCount %d, %!STATUS!", ResourceCount, Status));
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery FdoFindConnectResources exit resourceCount=%d status=%!STATUS!", ResourceCount, Status));
 
     return Status;
 }
@@ -749,7 +824,7 @@ Return Value:
 
     WDF_IO_TARGET_OPEN_PARAMS   OpenParams;
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+FdoOpenDevice"));
+    DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN FdoOpenDevice entry device=%p", _Device));
 
     Status = WdfIoTargetCreate(_Device,
                                WDF_NO_OBJECT_ATTRIBUTES,
@@ -757,6 +832,7 @@ Return Value:
 
     if (!NT_SUCCESS(Status))
     {
+        DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN WdfIoTargetCreate failed status=%!STATUS!", Status));
         goto Exit;
     }
 
@@ -769,6 +845,10 @@ Return Value:
 
     if (ValidConnectionID(FdoExtension->UARTConnectionId))
     {
+        DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN using ConnectionID high=0x%x low=0x%x",
+                FdoExtension->UARTConnectionId.HighPart,
+                FdoExtension->UARTConnectionId.LowPart));
+
         RtlInitEmptyUnicodeString(&TargetDeviceName,
                                   TargetDeviceNameBuffer,
                                   sizeof(TargetDeviceNameBuffer));
@@ -778,7 +858,7 @@ Return Value:
                                                   FdoExtension->UARTConnectionId.HighPart);
         if (!NT_SUCCESS(Status))
         {
-            DoTrace(LEVEL_INFO, TFLAG_PNP,(" Failed to construct the open path %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN RESOURCE_HUB_CREATE_PATH_FROM_ID failed status=%!STATUS!", Status));
             goto Exit;
         }
     }
@@ -793,7 +873,7 @@ Return Value:
 
         if (!NT_SUCCESS(Status))
         {
-            DoTrace(LEVEL_INFO, TFLAG_PNP,("IoGetDeviceInterfaces(): %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN IoGetDeviceInterfaces failed status=%!STATUS!", Status));
             goto Exit;
         }
 
@@ -801,6 +881,7 @@ Return Value:
         if (*SymbolicLinkList == L'\0')
         {
             Status = STATUS_DEVICE_DOES_NOT_EXIST;
+            DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN IoGetDeviceInterfaces returned empty list status=%!STATUS!", Status));
             goto Exit;
         }
 
@@ -809,7 +890,7 @@ Return Value:
         RtlInitUnicodeString(&TargetDeviceName, SymbolicLinkList);
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, (" Symbolic Name '%S'", TargetDeviceName.Buffer));
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_OPEN targetPath=%S", TargetDeviceName.Buffer));
 
     //
     // Open the "remote" IO Target (device) using its symbolic link.
@@ -827,7 +908,7 @@ Return Value:
 
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_INFO, TFLAG_PNP, ( " WdfIoTargetOpen failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN WdfIoTargetOpen failed status=%!STATUS!", Status));
         WdfObjectDelete(IoTargetSerial);
         goto Exit;
     }
@@ -840,6 +921,13 @@ Exit:
     {
         ExFreePool(SymbolicLinkList);
         SymbolicLinkList = NULL;
+    }
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN FdoOpenDevice exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN FdoOpenDevice exit ioTarget=%p status=%!STATUS!", *_pIoTarget, Status));
     }
 
     return Status;
@@ -1018,7 +1106,7 @@ Return Value:
 
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+FdoDevPrepareHardware"));
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevPrepareHardware entry device=%p", _Device));
 
     //
     // Acquire connection ID of connected controllers (UART and GPIO)
@@ -1028,7 +1116,7 @@ Return Value:
                                      _ResourcesTranslated);
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" Failed to find connection ID of target UART controller %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware FdoFindConnectResources failed status=%!STATUS!", Status));
 
         // Log(Informational): no UART Connection ID resource
 
@@ -1044,7 +1132,7 @@ Return Value:
 
     if (!NT_SUCCESS(Status) || FdoExtension->IoTargetSerial == NULL)
     {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" FdoOpenDevice failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware FdoOpenDevice failed status=%!STATUS!", Status));
 
         // Log(Error): Failed to open UART controller
         goto Exit;
@@ -1057,7 +1145,7 @@ Return Value:
 
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" HlpInitializeFdoExtension failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware HlpInitializeFdoExtension failed status=%!STATUS!", Status));
         goto Exit;
     }
 
@@ -1068,7 +1156,7 @@ Return Value:
                                 IdleCapCanTurnOff);
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" FdoSetIdleSettings failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware FdoSetIdleSettings failed status=%!STATUS!", Status));
         // goto Exit;
     }
 
@@ -1076,7 +1164,7 @@ Return Value:
     if (ValidConnectionID(FdoExtension->GPIOConnectionId)) {
         Status = DeviceEnable(_Device, TRUE);
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_PNP,("DeviceEnable failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_POWER,("POWER FdoDevPrepareHardware DeviceEnable failed status=%!STATUS!", Status));
             goto Exit;
         }
     }
@@ -1085,7 +1173,7 @@ Return Value:
     if (ValidConnectionID(FdoExtension->I2CConnectionId)) {
         Status = DevicePowerOn(_Device);
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_PNP,("DevicePowerOn failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_POWER,("POWER FdoDevPrepareHardware DevicePowerOn failed status=%!STATUS!", Status));
             goto Exit;
         }
     }
@@ -1101,7 +1189,7 @@ Return Value:
     {
         // Can have issue if this UART device cannot be initalized
         Status = STATUS_DEVICE_NOT_READY;
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" DeviceInitialize failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevPrepareHardware DeviceInitialize failed status=%!STATUS!", Status));
 
         // Log(Error): Failed to intialize/configure the device
         goto Exit;
@@ -1123,7 +1211,7 @@ Return Value:
 
         PAGED_CODE();
 
-        DoTrace(LEVEL_INFO, TFLAG_PNP, ("+CreateWorkItem to enable PDO"));
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO create_child dynamic workitem create entry"));
 
         WDF_OBJECT_ATTRIBUTES_INIT(&ObjAttributes);
 
@@ -1155,7 +1243,12 @@ Return Value:
 
 Exit:
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, ("-FdoDevPrepareHardware %!STATUS!", Status));
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("PNP FdoDevPrepareHardware exit status=%!STATUS!", Status));
+    }
 
     return Status;
 }
@@ -1188,15 +1281,18 @@ Return Value:
 
     UNREFERENCED_PARAMETER(_ResourcesTranslated);
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+PnpReleaseHardware"));
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevReleaseHardware entry device=%p", _Device));
 
     FdoExtension = FdoGetExtension(_Device);
 
     if (FdoExtension->IoTargetSerial)
     {
+        DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN FdoDevReleaseHardware delete ioTarget=%p", FdoExtension->IoTargetSerial));
         WdfObjectDelete(FdoExtension->IoTargetSerial);
         FdoExtension->IoTargetSerial = NULL;
     }
+
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevReleaseHardware exit status=%!STATUS!", STATUS_SUCCESS));
 
     return STATUS_SUCCESS;
 }
@@ -1227,7 +1323,7 @@ Return Value:
 
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+FdoDevSelfManagedIoInit"));
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevSelfManagedIoInit entry device=%p", _Device));
 
     //
     // Preallocate resources needed to perform read opeations
@@ -1235,7 +1331,7 @@ Return Value:
     Status = ReadResourcesAllocate(_Device);
 
     if (!NT_SUCCESS(Status)) {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" ReadResourcesAllocate failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevSelfManagedIoInit ReadResourcesAllocate failed status=%!STATUS!", Status));
         goto Exit;
     }
 
@@ -1252,11 +1348,18 @@ Return Value:
                            INITIAL_H4_READ_SIZE);
 
     if (!NT_SUCCESS(Status)) {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" ReadH4Packet failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevSelfManagedIoInit ReadH4Packet failed status=%!STATUS!", Status));
         goto Exit;
     }
 
 Exit:
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP,("PNP FdoDevSelfManagedIoInit exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevSelfManagedIoInit exit status=%!STATUS!", Status));
+    }
 
     return Status;
 }
@@ -1283,12 +1386,14 @@ Return Value:
 {
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+FdoDevSelfManagedIoCleanup"));
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevSelfManagedIoCleanup entry device=%p", _Device));
 
     //
     // Cancel and free resources
     //
     ReadResourcesFree(_Device);
+
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevSelfManagedIoCleanup exit device=%p", _Device));
 
     return;
 }
@@ -1320,9 +1425,8 @@ Return Value:
     PFDO_EXTENSION FdoExtension = FdoGetExtension(_Device);
     NTSTATUS       Status = STATUS_SUCCESS;
 
-    UNREFERENCED_PARAMETER(_PreviousState);
-
-    DoTrace(LEVEL_INFO, TFLAG_UART, ("+FdoDevD0Entry"));
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Entry entry device=%p previousState=%d initialized=%d",
+            _Device, _PreviousState, IsDeviceInitialized(FdoExtension)));
 
     // Reset error count upon resume to D0
     FdoExtension->OutOfSyncErrorCount = 0;
@@ -1334,7 +1438,7 @@ Return Value:
         if (ValidConnectionID(FdoExtension->GPIOConnectionId)) {
             Status = DeviceEnable(_Device, TRUE);
             if (!NT_SUCCESS(Status)) {
-                DoTrace(LEVEL_ERROR, TFLAG_PNP,("DeviceEnable failed %!STATUS!", Status));
+                DoTrace(LEVEL_ERROR, TFLAG_POWER,("POWER FdoDevD0Entry DeviceEnable failed status=%!STATUS!", Status));
                 goto Done;
             }
         }
@@ -1343,7 +1447,7 @@ Return Value:
         if (ValidConnectionID(FdoExtension->I2CConnectionId)) {
             Status = DevicePowerOn(_Device);
             if (!NT_SUCCESS(Status)) {
-                DoTrace(LEVEL_ERROR, TFLAG_PNP,("DevicePowerOn failed %!STATUS!", Status));
+                DoTrace(LEVEL_ERROR, TFLAG_POWER,("POWER FdoDevD0Entry DevicePowerOn failed status=%!STATUS!", Status));
                 goto Done;
             }
         }
@@ -1362,7 +1466,7 @@ Return Value:
                                                          FALSE);
         if (!IsDeviceInitialized(FdoExtension)) {
             Status = STATUS_DEVICE_NOT_READY;
-            DoTrace(LEVEL_ERROR, TFLAG_PNP, ("DeviceInitialize failed!"));
+            DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevD0Entry DeviceInitialize failed status=%!STATUS!", Status));
             goto Done;
         }
 
@@ -1374,26 +1478,31 @@ Return Value:
         // Restart the IOTarget to receiving request
         Status = WdfIoTargetStart(FdoExtension->IoTargetSerial);
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_PNP, ("WdfIoTargetStart failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevD0Entry WdfIoTargetStart failed status=%!STATUS!", Status));
             goto Done;
         }
 
         // Restart read pump
-        DoTrace(LEVEL_INFO, TFLAG_IO, (" Restarting read pump"));
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ FdoDevD0Entry restarting read pump"));
         Status = ReadH4Packet(&FdoExtension->ReadContext,
                               FdoExtension->ReadRequest,
                               FdoExtension->ReadMemory,
                               FdoExtension->ReadBuffer,
                               INITIAL_H4_READ_SIZE);
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_IO, ("ReadH4Packet [0] failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevD0Entry ReadH4Packet failed status=%!STATUS!", Status));
             goto Done;
         }
     }
 
 Done:
 
-    DoTrace(LEVEL_INFO, TFLAG_UART, ("-FdoDevD0Entry %!STATUS!", Status));
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER FdoDevD0Entry exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Entry exit status=%!STATUS!", Status));
+    }
 
     return Status;
 }
@@ -1426,9 +1535,7 @@ Return Value:
 
     PAGED_CODE();
 
-    UNREFERENCED_PARAMETER(_TargetState);
-
-    DoTrace(LEVEL_INFO, TFLAG_UART, ("+FdoDevD0Exit D0-> D%d", _TargetState-WdfPowerDeviceD0));
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Exit entry device=%p targetState=%d", _Device, _TargetState));
 
     // Cancel IO requests that are already in the IO queue,
     // wait for their completion before this function is returned.
@@ -1448,7 +1555,7 @@ Return Value:
     // Note: Do not delete the UART's IoTarget.
     //
 
-    DoTrace(LEVEL_INFO, TFLAG_UART, ("-FdoDevD0Exit"));
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Exit exit status=%!STATUS!", STATUS_SUCCESS));
 
     return STATUS_SUCCESS;
 }
@@ -1604,12 +1711,13 @@ Return Value:
     ULONG  DataLength;
     PVOID   Data = NULL;
 
-    DoTrace(LEVEL_INFO, TFLAG_DATA,("+FdoWriteDeviceIO"));
+    DoTrace(LEVEL_INFO, TFLAG_IO,("UART_WRITE FdoWriteDeviceIO entry request=%p type=%d hciLen=%d",
+            _RequestFromBthport, _HCIContext->Type, _HCIContext->DataLen));
 
     if (!IsDeviceInitialized(_FdoExtension))
     {
         Status = STATUS_DEVICE_NOT_READY;
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" FdoWriteDeviceIO: cannot attach IO %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO device not initialized status=%!STATUS!", Status));
         goto Done;
     }
 
@@ -1623,7 +1731,7 @@ Return Value:
                                       &ObjAttributes,
                                       &TransferContext);
     if (!NT_SUCCESS(Status)) {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfObjectAllocateContext failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO WdfObjectAllocateContext failed status=%!STATUS!", Status));
         goto Done;
     }
 
@@ -1633,7 +1741,7 @@ Return Value:
                     &RequestToUART);
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_ERROR, TFLAG_IO,(" HLP_WriteDeviceIO %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO,("UART_WRITE FdoWriteDeviceIO HLP_AllocateResourceForWrite failed status=%!STATUS!", Status));
         goto Done;
     }
 
@@ -1652,7 +1760,7 @@ Return Value:
                                          &TransferContext->Memory);
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfMemoryCreatePreallocated failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO WdfMemoryCreatePreallocated failed status=%!STATUS!", Status));
         goto Done;
     }
 
@@ -1663,7 +1771,7 @@ Return Value:
                                               NULL);
     if (!NT_SUCCESS(Status))
     {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfIoTargetFormatRequestForRead failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO WdfIoTargetFormatRequestForWrite failed status=%!STATUS!", Status));
         goto Done;
     }
 
@@ -1708,7 +1816,7 @@ Return Value:
         WdfObjectDereference(RequestToUART);
         WdfObjectDereference(_RequestFromBthport);
 
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfRequestSend failed %!STATUS! and UnmarkCancelable %!STATUS!", Status, StatusTemp));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO WdfRequestSend failed status=%!STATUS! unmarkStatus=%!STATUS!", Status, StatusTemp));
         goto Done;
     }
     else
@@ -1724,7 +1832,12 @@ Done:
         HLP_FreeResourceForWrite(TransferContext);
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("-FdoWriteDeviceIO %!STATUS!", Status));
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO exit status=%!STATUS!", Status));
+    }
 
     return Status;
 }
@@ -1864,11 +1977,13 @@ Return Value:
     WDFDEVICE   Device;
     BOOLEAN CompleteRequest = FALSE;
     ULONG ControlCode = (_IoControlCode & 0x00003ffc) >> 2;
+    ULONG HciPayloadAvailable = 0;
+    ULONG UartLength = 0;
     BTHX_HCI_PACKET_TYPE PacketType;
     PBTHX_HCI_READ_WRITE_CONTEXT HCIContext;
 
-    DoTrace(LEVEL_INFO, TFLAG_IOCTL,("+IoDeviceControl - InBufLen:%d, OutBufLen:%d",
-        (ULONG) _InputBufferLength, (ULONG) _OutputBufferLength));
+    DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL fdo entry code=0x%x func=%d inLen=%d outLen=%d",
+        _IoControlCode, ControlCode, (ULONG) _InputBufferLength, (ULONG) _OutputBufferLength));
 
     Device = WdfIoQueueGetDevice(_Queue);
 
@@ -1881,6 +1996,10 @@ Return Value:
         {
             InBuffer = WdfMemoryGetBuffer(ReqInMemory, &InBufferSize);
         }
+        else
+        {
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL fdo retrieve_input failed code=0x%x status=%!STATUS!", _IoControlCode, Status));
+        }
     }
 
     if (_OutputBufferLength)
@@ -1890,31 +2009,40 @@ Return Value:
         {
             OutBuffer = WdfMemoryGetBuffer(ReqOutMemory, &OutBufferSize);
         }
+        else
+        {
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL fdo retrieve_output failed code=0x%x status=%!STATUS!", _IoControlCode, Status));
+        }
     }
 
     switch (_IoControlCode)
     {
     case IOCTL_BTHX_WRITE_HCI:
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,(" IOCTL_BTHX_WRITE_HCI ---------->"));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL write_hci code=0x%x inSize=%d outSize=%d", _IoControlCode, (ULONG) InBufferSize, (ULONG) OutBufferSize));
         // Validate input and output parameters
         if (!InBuffer || InBufferSize < sizeof(BTHX_HCI_READ_WRITE_CONTEXT) ||
             !OutBuffer || OutBufferSize != sizeof(BTHX_HCI_PACKET_TYPE))
         {
             Status = STATUS_INVALID_PARAMETER;
-            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,(" IOCTL_BTHX_WRITE_HCI %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL write_hci invalid_buffer status=%!STATUS!", Status));
             break;
         }
 
         HCIContext = (PBTHX_HCI_READ_WRITE_CONTEXT) InBuffer;
 
         PacketType = (BTHX_HCI_PACKET_TYPE) HCIContext->Type;
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL write_hci type=%d hciLen=%d", PacketType, HCIContext->DataLen));
 
         if (!BTHX_VALID_WRITE_PACKET_TYPE(PacketType))
         {
             Status = STATUS_INVALID_PARAMETER;
-            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,(" Mismach Write HCI packet type and IOCTL %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL write_hci invalid_type type=%d status=%!STATUS!", PacketType, Status));
             break;
         }
+
+        HciPayloadAvailable = (ULONG)(InBufferSize - FIELD_OFFSET(BTHX_HCI_READ_WRITE_CONTEXT, Data));
+        UartLength = (ULONG) sizeof(HCIContext->Type) + HCIContext->DataLen;
+        TraceHciTxSummary(HCIContext, UartLength, HciPayloadAvailable);
 
         if (PacketType == HciPacketCommand)
         {
@@ -1932,22 +2060,23 @@ Return Value:
         break;
 
     case IOCTL_BTHX_READ_HCI:
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,(" IOCTL_BTHX_READ_HCI <----------"));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL read_hci code=0x%x inSize=%d outSize=%d", _IoControlCode, (ULONG) InBufferSize, (ULONG) OutBufferSize));
         // Validate input and output parameters
         if (!InBuffer || InBufferSize != sizeof(BTHX_HCI_PACKET_TYPE) ||
             !OutBuffer || OutBufferSize < sizeof(BTHX_HCI_READ_WRITE_CONTEXT))
         {
             Status = STATUS_INVALID_PARAMETER;
-            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,(" IOCTL_BTHX_READ_HCI %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL read_hci invalid_buffer status=%!STATUS!", Status));
             break;
         }
 
         PacketType = *((BTHX_HCI_PACKET_TYPE *) InBuffer);
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL read_hci type=%d", PacketType));
 
         if (!BTHX_VALID_READ_PACKET_TYPE(PacketType))
         {
             Status = STATUS_INVALID_PARAMETER;
-            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,(" IOCTL_BTHX_READ_HCI %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL read_hci invalid_type type=%d status=%!STATUS!", PacketType, Status));
             break;
         }
 
@@ -2001,14 +2130,14 @@ Return Value:
         else
         {
             Status = STATUS_INVALID_PARAMETER;
-            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,(" IOCTL_BTHX_READ_HCI %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL read_hci unexpected_type type=%d status=%!STATUS!", PacketType, Status));
             break;
         }
         break;
 
     case IOCTL_BTHX_GET_VERSION:
         CompleteRequest = TRUE;
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("IOCTL_BTHX_GET_VERSION"));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL get_version"));
 
         if (OutBuffer && OutBufferSize >= sizeof(BTHX_VERSION))
         {
@@ -2024,13 +2153,13 @@ Return Value:
 
     case IOCTL_BTHX_SET_VERSION:
         CompleteRequest = TRUE;
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("IOCTL_BTHX_SET_VERSION"));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL set_version"));
 
         if (InBuffer && InBufferSize >= sizeof(BTHX_VERSION))
         {
             BTHX_VERSION SupportedVersion = *((BTHX_VERSION *)InBuffer);
 
-            DoTrace(LEVEL_INFO, TFLAG_IOCTL,("IOCTL_BTHX_SET_VERSION 0x%x", SupportedVersion.Version));
+            DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL set_version version=0x%x", SupportedVersion.Version));
 
             WdfRequestComplete(_Request, Status);
             return;
@@ -2043,7 +2172,7 @@ Return Value:
 
     case IOCTL_BTHX_QUERY_CAPABILITIES:
         CompleteRequest = TRUE;
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("IOCTL_BTHX_QUERY_CAPABILITIES"));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL query_capabilities"));
 
         if (OutBuffer && OutBufferSize >= sizeof(BTHX_CAPABILITIES))
         {
@@ -2066,7 +2195,7 @@ Return Value:
     //
     case IOCTL_BUSENUM_SET_RADIO_ONOFF_VENDOR_SPECFIC:
         CompleteRequest = TRUE;
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("IOCTL_BUSENUM_SET_RADIO_ONOFF_VENDOR_SPECFIC"));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff_vendor_specific"));
         if (InBuffer && InBufferSize >= sizeof(BOOLEAN)) {
             BOOLEAN IsRadioEnabled = *((BOOLEAN *) InBuffer);
 
@@ -2090,11 +2219,11 @@ Return Value:
                             FdoExtension->IsRadioEnabled = TRUE;
                         }
                     }
-                    DoTrace(LEVEL_INFO, TFLAG_IOCTL,(" EnableRadio %!STATUS!", Status));
+                    DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff enable status=%!STATUS!", Status));
                 }
                 else {
                     Status = STATUS_SUCCESS;
-                    DoTrace(LEVEL_WARNING, TFLAG_IOCTL,(" Already enabled!"));
+                    DoTrace(LEVEL_WARNING, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff already_enabled"));
                 }
             }
             else {
@@ -2114,11 +2243,11 @@ Return Value:
                         Status = DevicePowerOff(Device);
                     }
 
-                    DoTrace(LEVEL_INFO, TFLAG_IOCTL,(" DisableRadio %!STATUS!", Status));
+                    DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff disable status=%!STATUS!", Status));
                 }
                 else {
                     Status = STATUS_SUCCESS;
-                    DoTrace(LEVEL_WARNING, TFLAG_IOCTL,(" Already disabled!"));
+                    DoTrace(LEVEL_WARNING, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff already_disabled"));
                 }
             }
         }
@@ -2128,13 +2257,19 @@ Return Value:
         break;
 
     default:
-        DoTrace(LEVEL_INFO, TFLAG_IOCTL,(" IOCTL_(0x%x, Func %d)", _IoControlCode, ControlCode));
+        DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL unsupported code=0x%x func=%d", _IoControlCode, ControlCode));
         Status = STATUS_NOT_SUPPORTED;
         break;
     }
 
     if (!NT_SUCCESS(Status) || CompleteRequest)
     {
+        if (!NT_SUCCESS(Status)) {
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL fdo complete code=0x%x status=%!STATUS!", _IoControlCode, Status));
+        }
+        else {
+            DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL fdo complete code=0x%x status=%!STATUS!", _IoControlCode, Status));
+        }
         WdfRequestComplete(_Request, Status);
     }
 

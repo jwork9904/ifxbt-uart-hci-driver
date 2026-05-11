@@ -23,6 +23,117 @@ Revision History:
 
 #pragma warning(disable:4127) // conditional expression is constant
 
+#define HCI_TRACE_BYTE_LIMIT 16
+
+static
+VOID
+TraceHciRxSummary(
+    _In_ UCHAR _H4Type,
+    _In_reads_bytes_opt_(_PacketLength) PUCHAR _Packet,
+    _In_ ULONG _PacketLength
+    )
+{
+    UCHAR TraceBytes[HCI_TRACE_BYTE_LIMIT] = {0};
+    ULONG BytesToTrace = 0;
+    ULONG Index;
+    UCHAR EventCode = 0;
+    UCHAR ParamsCount = 0;
+    UCHAR StatusByte = 0;
+    ULONG Opcode = 0;
+    BOOLEAN EventCodeValid = FALSE;
+    BOOLEAN OpcodeValid = FALSE;
+    BOOLEAN StatusValid = FALSE;
+    const ULONG HciEventHeaderLength = (ULONG) HCI_EVENT_HEADER_LEN;
+
+    if (_Packet && _PacketLength) {
+        BytesToTrace = MinToPrint(_PacketLength, HCI_TRACE_BYTE_LIMIT);
+        for (Index = 0; Index < BytesToTrace; Index++) {
+            TraceBytes[Index] = _Packet[Index];
+        }
+    }
+
+    if (_H4Type == (UCHAR) HciPacketEvent) {
+        if (_Packet && _PacketLength >= HciEventHeaderLength) {
+            EventCode = _Packet[0];
+            ParamsCount = _Packet[1];
+            EventCodeValid = TRUE;
+
+            if ((ULONG) ParamsCount + HciEventHeaderLength != _PacketLength) {
+                DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_length h4Type=%d hciLen=%d paramsCount=%d expectedLen=%d",
+                        _H4Type, _PacketLength, ParamsCount, (ULONG) ParamsCount + HciEventHeaderLength));
+            }
+
+            if (EventCode == CommandComplete) {
+                if (ParamsCount >= 3 && _PacketLength >= 5) {
+                    Opcode = ((ULONG)_Packet[4] << 8) | _Packet[3];
+                    OpcodeValid = TRUE;
+                }
+                if (ParamsCount >= 4 && _PacketLength >= 6) {
+                    StatusByte = _Packet[5];
+                    StatusValid = TRUE;
+                }
+            }
+            else if (EventCode == CommandStatus) {
+                if (ParamsCount >= 1 && _PacketLength >= 3) {
+                    StatusByte = _Packet[2];
+                    StatusValid = TRUE;
+                }
+                if (ParamsCount >= 4 && _PacketLength >= 6) {
+                    Opcode = ((ULONG)_Packet[5] << 8) | _Packet[4];
+                    OpcodeValid = TRUE;
+                }
+            }
+        }
+        else {
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR short_packet h4Type=%d hciLen=%d minLen=%d",
+                    _H4Type, _PacketLength, HciEventHeaderLength));
+        }
+
+        DoTrace(LEVEL_INFO, TFLAG_HCI, ("HCI_RX summary h4Type=%d hciLen=%d eventCodeValid=%d eventCode=0x%x paramsCount=%d opcodeValid=%d opcode=0x%x statusValid=%d status=0x%x",
+                _H4Type, _PacketLength, EventCodeValid, EventCode, ParamsCount, OpcodeValid, Opcode, StatusValid, StatusByte));
+    }
+    else if (_H4Type == (UCHAR) HciPacketAclData) {
+        if (_Packet && _PacketLength >= HCI_ACL_HEADER_SIZE) {
+            ULONG AclPayloadLength = ((ULONG)_Packet[3] << 8) | _Packet[2];
+            if (AclPayloadLength + HCI_ACL_HEADER_SIZE != _PacketLength) {
+                DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_length h4Type=%d hciLen=%d aclPayloadLen=%d expectedLen=%d",
+                        _H4Type, _PacketLength, AclPayloadLength, AclPayloadLength + HCI_ACL_HEADER_SIZE));
+            }
+        }
+        else {
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR short_packet h4Type=%d hciLen=%d minLen=%d",
+                    _H4Type, _PacketLength, HCI_ACL_HEADER_SIZE));
+        }
+
+        DoTrace(LEVEL_INFO, TFLAG_HCI, ("HCI_RX summary h4Type=%d hciLen=%d eventCode=none opcode=none status=none",
+                _H4Type, _PacketLength));
+    }
+    else {
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_h4_type h4Type=%d hciLen=%d", _H4Type, _PacketLength));
+    }
+
+    DoTrace(LEVEL_VERBOSE, TFLAG_HCI, ("HCI_RX bytes h4Type=%d hciLen=%d bytesLogged=%d data=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+            _H4Type,
+            _PacketLength,
+            BytesToTrace,
+            TraceBytes[0],
+            TraceBytes[1],
+            TraceBytes[2],
+            TraceBytes[3],
+            TraceBytes[4],
+            TraceBytes[5],
+            TraceBytes[6],
+            TraceBytes[7],
+            TraceBytes[8],
+            TraceBytes[9],
+            TraceBytes[10],
+            TraceBytes[11],
+            TraceBytes[12],
+            TraceBytes[13],
+            TraceBytes[14],
+            TraceBytes[15]));
+}
+
 #ifdef ALLOC_PRAGMA
 #endif
 
@@ -284,8 +395,11 @@ Return Value:
     Status = _Params->IoStatus.Status;
     TransferContext = (PUART_WRITE_CONTEXT) _Context;
 
-    DoTrace(LEVEL_INFO, TFLAG_DATA,("+CR_WriteDeviceIO: %!STATUS!, Request %p, Context %p",
+    DoTrace(LEVEL_INFO, TFLAG_IO,("UART_WRITE CR_WriteDeviceIO entry status=%!STATUS! request=%p context=%p",
             Status, _Request, _Context));
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_IO,("UART_WRITE CR_WriteDeviceIO lower completion failed status=%!STATUS!", Status));
+    }
 
     NT_ASSERT( (Status == STATUS_SUCCESS || Status == STATUS_CANCELLED) && L"WriteHCI request failed!");
 
@@ -376,6 +490,8 @@ Return Value:
                 {
                     // return a generic failure for an incomplete transfer
                     Status = STATUS_UNSUCCESSFUL;
+                    DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE CR_WriteDeviceIO incomplete_write bytesWritten=%d expected=%d status=%!STATUS!",
+                            BytesWritten, TransferContext->HCIPacketLen, Status));
                     goto Done;
                 }
 
@@ -392,6 +508,14 @@ Return Value:
                         *OutBuffer = TransferContext->HCIContext->DataLen;
                         BytesDataWritten = sizeof(ULONG);
                     }
+                    else
+                    {
+                        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE CR_WriteDeviceIO output buffer too small outBufferSize=%d", (ULONG) OutBufferSize));
+                    }
+                }
+                else
+                {
+                    DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE CR_WriteDeviceIO WdfRequestRetrieveOutputMemory failed status=%!STATUS!", Status));
                 }
             }
             else
@@ -417,7 +541,7 @@ Done:
             InterlockedIncrement(&FdoExtension->CntWriteDataCompleted);
         }
 
-        DoTrace(LEVEL_INFO, TFLAG_IO,(" WriteDeviceIO: Request %p complete with %!STATUS! and %d BytesDataWritten",
+        DoTrace(LEVEL_INFO, TFLAG_IO,("UART_WRITE CR_WriteDeviceIO complete request=%p status=%!STATUS! bytesDataWritten=%d",
                 RequestFromBthport, Status, BytesDataWritten));
 
         // Delete this memory object that is no longer needed.
@@ -434,7 +558,7 @@ Done:
     // Done accessing it in this function.   This request is either completed in this function for the typical completion situation or in the cancellation function.
     WdfObjectDereference(RequestFromBthport);
 
-    DoTrace(LEVEL_INFO, TFLAG_IO,("-CR_WriteDeviceIO"));
+    DoTrace(LEVEL_INFO, TFLAG_IO,("UART_WRITE CR_WriteDeviceIO exit status=%!STATUS!", Status));
 }
 
 
@@ -502,8 +626,9 @@ ReadH4PacketComplete(
 {
     NTSTATUS Status = STATUS_SUCCESS;
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("+ReadH4PacketComplete %S Packet Length %d",
-        _Type == (UCHAR) HciPacketEvent ? L"Event" : L"AclData", _BufferLength ));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketComplete entry h4Type=%d hciLen=%d",
+            _Type, _BufferLength));
+    TraceHciRxSummary(_Type, _Buffer, _BufferLength);
 
 #if DBG
     // Tracking last completed packet
@@ -534,7 +659,7 @@ ReadH4PacketComplete(
                            &_FdoExtension->DataListCount);
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("-ReadH4PacketComplete %!STATUS!", Status));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketComplete exit status=%!STATUS!", Status));
 
     return Status;
 }
@@ -572,7 +697,7 @@ Return Value:
     ULONG PacketLen;
     ULONG BytesToRead;
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("+ReadH4PacketReassemble: %d _BytesRead, ReadSegmentState %d",
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketReassemble entry bytesRead=%d readSegmentState=%d",
         _BytesRead, _ReadContext->ReadSegmentState));
 
     //
@@ -621,6 +746,7 @@ Return Value:
                 //
                 Status = STATUS_INVALID_PARAMETER;  // discard and read again
                 DoTrace(LEVEL_ERROR, TFLAG_IO, (" Unexpected PacketType %d", H4Packet->Type));
+                DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_h4_type h4Type=%d status=%!STATUS!", H4Packet->Type, Status));
                 NT_ASSERT(FALSE && L"Detected unknown packet type");
                 goto OutOfSync;
             }
@@ -755,6 +881,11 @@ Return Value:
                     DoTrace(LEVEL_ERROR, TFLAG_IO, (" Unexpected ACL DataLength %d > Presetted maximum size %d",
                             _ReadContext->H4Packet.Packet.AclData.DataLength,
                             HCI_MAX_ACL_PAYLOAD_SIZE));
+                    DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_length h4Type=%d aclPayloadLen=%d maxPayloadLen=%d status=%!STATUS!",
+                            _ReadContext->H4Packet.Type,
+                            _ReadContext->H4Packet.Packet.AclData.DataLength,
+                            HCI_MAX_ACL_PAYLOAD_SIZE,
+                            Status));
                     NT_ASSERT(FALSE && L"Max ACL DataLength exceeded the presetted Max");
                     goto OutOfSync;
                 }
@@ -801,6 +932,7 @@ Return Value:
 
         default:
             DoTrace(LEVEL_ERROR, TFLAG_IO, (" Unknown ReadSegmentState"));
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_state readSegmentState=%d", _ReadContext->ReadSegmentState));
             break;
         }
     }
@@ -810,6 +942,7 @@ Return Value:
 OutOfSync:
 
     DoTrace(LEVEL_ERROR, TFLAG_IO, (" Out-of-sync error detected in ProcessReadBuffer() %!STATUS!", Status));
+    DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR out_of_sync status=%!STATUS!", Status));
 
     return Status;
 }
@@ -866,7 +999,7 @@ Return Value:
                                                REQUEST_COMPLETE,
                                                REQUEST_SENT);
 
-    DoTrace(LEVEL_WARNING, TFLAG_DATA, ("+ReadH4PacketCompletionRoutine %!STATUS! %d BytesRead %S)",
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine entry status=%!STATUS! bytesRead=%d completion=%S",
             Status, BytesRead, PreviousState == REQUEST_PENDING ? L"Async" : L"*Sync*"));
 
     FdoExtension = (PFDO_EXTENSION) ReadContext->FdoExtension;
@@ -882,7 +1015,7 @@ Return Value:
         // Continue to process
     }
     else  {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" ReadH4PacketCompletionRoutine failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine failed status=%!STATUS!", Status));
         if (Status == STATUS_CANCELLED) {
             //
             // Under regualr operational state, IO Target will only cancel a request
@@ -895,8 +1028,11 @@ Return Value:
 
     ReadMemory = _Params->Parameters.Read.Buffer;
     OutBuffer = (PUCHAR) WdfMemoryGetBuffer(ReadMemory, &OutBufferSize);
+    if (OutBufferSize < BytesRead) {
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR short_packet outBufferSize=%d bytesRead=%d", (ULONG) OutBufferSize, BytesRead));
+    }
     NT_ASSERT(OutBufferSize >= BytesRead);
-    DoTrace(LEVEL_INFO, TFLAG_IO, (" ReadH4PacketCompletionRoutine %d BytesRead pBuffer %p", BytesRead, OutBuffer));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine buffer bytesRead=%d buffer=%p", BytesRead, OutBuffer));
 
     //
     // Process a read buffer if there is data
@@ -917,6 +1053,10 @@ Return Value:
             DoTrace(LEVEL_ERROR, TFLAG_IO, (" ====> [%d] 0x%x  <=====",
                     FdoExtension->OutOfSyncErrorCount,
                     *OutBuffer));
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR reassemble_failed count=%d firstByte=0x%x status=%!STATUS!",
+                    FdoExtension->OutOfSyncErrorCount,
+                    *OutBuffer,
+                    Status));
             NT_ASSERT(NT_SUCCESS(Status) && L"Encountered an out-of-sync condition!");
 
             // Prepare to read next data packet, starting with packet type.
@@ -966,7 +1106,7 @@ Return Value:
             else
             {
 
-                DoTrace(LEVEL_ERROR, TFLAG_IO, (" Detect out-of-sync error but read ahead..."));
+                DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine read ahead after out-of-sync"));
 
                 // Reset hardware error.
                 FdoExtension->HardwareErrorDetected = FALSE;
@@ -994,7 +1134,7 @@ ReadNext:
                        ReadContext->BytesToRead4FullPacket ? ReadContext->BytesToRead4FullPacket :
                        sizeof(FdoExtension->ReadBuffer));
 
-        DoTrace(LEVEL_INFO, TFLAG_IO, (" ReadH4Packet(Read Buffer Size %d bytes)", BytesToRead));
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine next_read bytesToRead=%d", BytesToRead));
 
         // Issue next read here since this request was complete asychronously
         // i.e. pending first and then this completion routein is invoked.
@@ -1010,7 +1150,7 @@ ReadNext:
         // i.e. this function is invoked first and then return to the RequestSent function.
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("-CR_ReadReadIO (fall though)"));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine exit status=%!STATUS!", Status));
 
     return;
 
@@ -1020,10 +1160,10 @@ Exit:
     {
         NT_ASSERT(Status == STATUS_CANCELLED);
         FdoExtension->ReadPumpRunning = FALSE;
-        DoTrace(LEVEL_WARNING, TFLAG_IO, (" Pump has stopped!"));
+        DoTrace(LEVEL_WARNING, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine pump stopped status=%!STATUS!", Status));
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("-CR_ReadReadIO (error)"));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketCompletionRoutine exit error status=%!STATUS!", Status));
 }
 
 NTSTATUS
@@ -1054,24 +1194,24 @@ Return Value:
     WDF_REQUEST_REUSE_PARAMS RequestReuseParams;
     NTSTATUS Status;
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("+ReadH4Packet"));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4Packet entry bufferLen=%d", _BufferLen));
 
     FdoExtension = _ReadContext->FdoExtension;
 
     if (0 == _BufferLen) {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" ReadH4Packet: _BufferLen cannot be 0"));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet invalid bufferLen=0"));
         Status = STATUS_INVALID_PARAMETER;
         goto Done;
     }
 
     while (TRUE) {
 
-        DoTrace(LEVEL_INFO, TFLAG_IO, (" ReadH4Packet - <start>"));
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4Packet send_start bufferLen=%d", _BufferLen));
         NT_ASSERT(_ReadContext->RequestState != REQUEST_SENT);
 
         if (!IsDeviceInitialized(FdoExtension)) {
             Status = STATUS_DEVICE_NOT_READY;
-            DoTrace(LEVEL_ERROR, TFLAG_IO, (" ReadH4Packet: cannot attach IO %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet device not initialized status=%!STATUS!", Status));
             goto Done;
         }
 
@@ -1081,13 +1221,13 @@ Return Value:
         WDF_REQUEST_REUSE_PARAMS_INIT(&RequestReuseParams, WDF_REQUEST_REUSE_NO_FLAGS, STATUS_SUCCESS);
         Status = WdfRequestReuse(_WdfRequest, &RequestReuseParams);
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfRequestReuse failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet WdfRequestReuse failed status=%!STATUS!", Status));
             goto Done;
         }
 
         Status = WdfMemoryAssignBuffer(_WdfMemory, _Buffer, _BufferLen);
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfMemoryAssignBuffer failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet WdfMemoryAssignBuffer failed status=%!STATUS!", Status));
             goto Done;
         }
 
@@ -1097,7 +1237,7 @@ Return Value:
                                                  NULL, NULL);
 
         if (!NT_SUCCESS(Status)) {
-            DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfIoTargetFormatRequestForRead failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet WdfIoTargetFormatRequestForRead failed status=%!STATUS!", Status));
             goto Done;
         }
 
@@ -1115,7 +1255,7 @@ Return Value:
                                     WDF_NO_SEND_OPTIONS))
         {
             Status = WdfRequestGetStatus(_WdfRequest);
-            DoTrace(LEVEL_ERROR, TFLAG_IO, (" WdfRequestSend failed %!STATUS!", Status));
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet WdfRequestSend failed status=%!STATUS!", Status));
 
             // Not much we can do if cannot send this request; data pump will be stopped!
             goto Done;
@@ -1129,7 +1269,7 @@ Return Value:
                                                        REQUEST_PENDING,
                                                        REQUEST_SENT);
 
-            DoTrace(LEVEL_WARNING, TFLAG_IO, (" WdfRequestSend ReqState: %d -> %d",
+            DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4Packet request_state previous=%d current=%d",
                     PreviousState, _ReadContext->RequestState));
 
             if (PreviousState == REQUEST_SENT)
@@ -1164,7 +1304,12 @@ Done:
         FdoExtension->ReadPumpRunning = FALSE;
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("-ReadH4Packet %!STATUS!", Status));
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadH4Packet exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4Packet exit status=%!STATUS!", Status));
+    }
 
     return Status;
 }
@@ -1226,7 +1371,8 @@ Return Value:
     PBTHX_HCI_READ_WRITE_CONTEXT HCIContext;
     BOOLEAN CompleteRequest = FALSE;
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("+ReadRequestComplete"));
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadRequestComplete entry packetType=%d packetLength=%d queueCount=%d listCount=%d",
+            _PacketType, _PacketLength, *_QueueCount, *_ListCount));
 
     //
     //      (ReqQueue, PktList)
@@ -1305,7 +1451,7 @@ Return Value:
     // Complete this request
     Status = WdfRequestRetrieveOutputMemory(Request, &ReqOutMemory);
     if (Status != STATUS_SUCCESS) {
-        DoTrace(LEVEL_ERROR, TFLAG_IO, (" Could not retrieve output buffer"));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadRequestComplete WdfRequestRetrieveOutputMemory failed status=%!STATUS!", Status));
         WdfRequestCompleteWithInformation(Request, Status, (ULONG_PTR)0);
         goto Done;
     }
@@ -1314,6 +1460,10 @@ Return Value:
     BytesToReturn = FIELD_OFFSET(BTHX_HCI_READ_WRITE_CONTEXT, Data) + _PacketLength;
 
     // This should not happen because BthMini should have sent down largest buffer according to device's capability.
+    if (BytesToReturn > BufferSize) {
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR buffer_too_small packetType=%d packetLength=%d bytesToReturn=%d bufferSize=%d",
+                _PacketType, _PacketLength, (ULONG) BytesToReturn, (ULONG) BufferSize));
+    }
     NT_ASSERT(BytesToReturn <= BufferSize);
 
     // Transfer data to Request's output buffer
@@ -1325,6 +1475,7 @@ Return Value:
     else {
         Status = STATUS_BUFFER_TOO_SMALL;
         BytesToReturn = 0;
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadRequestComplete buffer too small status=%!STATUS!", Status));
     }
 
     // Validate and print out (WPP) HCI packet info
@@ -1350,7 +1501,7 @@ Return Value:
                 _FdoExtension->CntReadDataCompleted, Status, (ULONG) BytesToReturn));
     }
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, (" Completing Request(%p) %!STATUS!, %d BytesToReturn",
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadRequestComplete completing request=%p status=%!STATUS! bytesToReturn=%d",
             Request, Status, (ULONG) BytesToReturn));
 
     //
@@ -1360,7 +1511,12 @@ Return Value:
 
 Done:
 
-    DoTrace(LEVEL_INFO, TFLAG_IO, ("-ReadRequestComplete: %!STATUS!", Status));
+    if (!NT_SUCCESS(Status) && Status != STATUS_PENDING) {
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ ReadRequestComplete exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadRequestComplete exit status=%!STATUS!", Status));
+    }
 
     return Status;
 }

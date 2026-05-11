@@ -75,7 +75,10 @@ Return Value:
     UNREFERENCED_PARAMETER(_Flags);
     UNREFERENCED_PARAMETER(_ResetParameters);
 
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO reset PdoResetHandlerDynamic entry resetType=%d", _ResetType));
+
     if (_ResetType != PlatformLevelDeviceReset) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PDO reset PdoResetHandlerDynamic unsupported resetType=%d status=%!STATUS!", _ResetType, STATUS_NOT_SUPPORTED));
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -90,6 +93,8 @@ Return Value:
     //
 
     WdfDeviceSetFailed((WDFDEVICE) WdfObjectContextGetObject(PdoExtension), WdfDeviceFailedAttemptRestart);
+
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO reset PdoResetHandlerDynamic exit status=%!STATUS!", STATUS_SUCCESS));
 
     return STATUS_SUCCESS;
 }
@@ -435,7 +440,10 @@ Return Value:
     UNREFERENCED_PARAMETER(_Flags);
     UNREFERENCED_PARAMETER(_ResetParameters);
 
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO reset PdoResetHandler entry resetType=%d", _ResetType));
+
     if (_ResetType != PlatformLevelDeviceReset) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PDO reset PdoResetHandler unsupported resetType=%d status=%!STATUS!", _ResetType, STATUS_NOT_SUPPORTED));
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -449,6 +457,8 @@ Return Value:
 
     FdoRemoveOneChildDevice(Fdo, BLUETOOTH_FUNC_IDS);
     FdoCreateOneChildDevice(Fdo, BT_PDO_HARDWARE_IDS, BLUETOOTH_FUNC_IDS);
+
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO reset PdoResetHandler exit status=%!STATUS!", STATUS_SUCCESS));
 
     return STATUS_SUCCESS;
 }
@@ -497,7 +507,7 @@ Return Value:
     WDF_QUERY_INTERFACE_CONFIG          DeviceResetInterfaceConfig;
     DEVICE_RESET_INTERFACE_STANDARD     ResetInterface;
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, (" +PdoCreate: HWID(%S), compatID(%S)", _HardwareIds, BT_PDO_COMPATIBLE_IDS));
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO create PdoCreate entry hwid=%S compatId=%S serialNo=%d", _HardwareIds, BT_PDO_COMPATIBLE_IDS, _SerialNo));
 
     PAGED_CODE();
 
@@ -824,7 +834,7 @@ Cleanup:
     //
     if (!NT_SUCCESS(Status)) {
         
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" -PdoCreate: exit %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PDO create PdoCreate failed serialNo=%d status=%!STATUS!", _SerialNo, Status));
         
         if (DeviceInit != NULL) {
             WdfDeviceInitFree(DeviceInit);
@@ -836,7 +846,7 @@ Cleanup:
     }
     else
     {
-        DoTrace(LEVEL_INFO, TFLAG_PNP, (" -PdoCreate: exit %!STATUS!", Status));          
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO create PdoCreate exit serialNo=%d child=%p status=%!STATUS!", _SerialNo, ChildDevice, Status));
     }
 
     if (NULL != ContainerID.Buffer) {
@@ -1049,12 +1059,14 @@ Return Value:
     // Do not mark this function pageable to potentially reduce power up time.
     //
     
-    DoTrace(LEVEL_INFO, TFLAG_POWER,("<==(D)== PdoDevDisableWakeAtBus"));  
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER PdoDevDisableWakeAtBus entry device=%p", _Device));
 
     //
     // Device specific implementation to disarm for wake
     //
     DeviceDisableWakeControl(_Device);    
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER PdoDevDisableWakeAtBus exit device=%p", _Device));
 }
 
 NTSTATUS
@@ -1081,17 +1093,27 @@ Return Value:
 
 --*/
 {
+    NTSTATUS Status;
+
     //
     // Do not mark this function pageable to potentially reduce power up time.
     //
     
-    DoTrace(LEVEL_INFO, TFLAG_POWER,("==(E)==> PdoDevEnableWakeAtBus from %S", 
-            _PowerState == PowerSystemWorking ? L"S0" : L"Sx"));
+    DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER PdoDevEnableWakeAtBus entry device=%p powerState=%S",
+            _Device, _PowerState == PowerSystemWorking ? L"S0" : L"Sx"));
 
     //
     // Device specific implementation to arm for wake
     //
-    return DeviceEnableWakeControl(_Device, _PowerState);  
+    Status = DeviceEnableWakeControl(_Device, _PowerState);
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER,("POWER PdoDevEnableWakeAtBus failed status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER PdoDevEnableWakeAtBus exit status=%!STATUS!", Status));
+    }
+
+    return Status;
 }
 
 VOID
@@ -1138,8 +1160,8 @@ Return Value:
     UNREFERENCED_PARAMETER(_OutputBufferLength);
     UNREFERENCED_PARAMETER(_InputBufferLength);
 
-    DoTrace(LEVEL_INFO, TFLAG_IOCTL,("+IoDeviceControl - InBufLen:%d, OutBufLen:%d",
-            (ULONG) _InputBufferLength, (ULONG) _OutputBufferLength));
+    DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL pdo entry code=0x%x func=%d inLen=%d outLen=%d",
+            _IoControlCode, ControlCode, (ULONG) _InputBufferLength, (ULONG) _OutputBufferLength));
     
     switch (_IoControlCode) {  
     case IOCTL_BTHX_GET_VERSION:
@@ -1158,18 +1180,24 @@ Return Value:
         Status = WdfRequestForwardToParentDeviceIoQueue(_Request,
                                                         WdfDeviceGetDefaultQueue(ParentDevice),
                                                         &ForwardOptions);
+        if (!NT_SUCCESS(Status)) {
+            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL pdo forward failed code=0x%x status=%!STATUS!", _IoControlCode, Status));
+        }
+        else {
+            DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL pdo forward code=0x%x status=%!STATUS!", _IoControlCode, Status));
+        }
         break;  
       
     default:
         //
         // Complete this unexptected IOCTL with default STATUS_INVALID_PARAMETER.
         //        
-        DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("Unexpected IOCTL_(0x%x, Func %d)", _IoControlCode, ControlCode));
+        DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL pdo unexpected code=0x%x func=%d", _IoControlCode, ControlCode));
         break;         
     }
     
     if (!NT_SUCCESS(Status)){
-        DoTrace(LEVEL_ERROR, TFLAG_IOCTL,(" IOCTL_(0x%x, Func %d) failed %!STATUS!", _IoControlCode, ControlCode, Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL pdo complete code=0x%x func=%d status=%!STATUS!", _IoControlCode, ControlCode, Status));
         WdfRequestComplete(_Request, Status);
         return;
     }        

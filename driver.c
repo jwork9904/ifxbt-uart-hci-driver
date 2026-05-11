@@ -50,7 +50,7 @@ Return Value:
 {
     PAGED_CODE();  
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+DriverCleanup"));      
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("DRIVER unload DriverCleanup object=%p", _Object));
 
     WPP_CLEANUP( WdfDriverWdmGetDriverObject( _Object ));
 }
@@ -67,7 +67,7 @@ DriverSetDeviceCallbackEvents(
 
     PAGED_CODE();  
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP,("+DriverSetDeviceCallbackEvents"));    
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("DRIVER callbacks DriverSetDeviceCallbackEvents entry deviceInit=%p", _DeviceInit));
     
     //
     // Set event callbacks
@@ -112,6 +112,8 @@ DriverSetDeviceCallbackEvents(
     
     WdfDeviceInitSetPowerPolicyEventCallbacks(_DeviceInit, 
                                               &PowerPolicyCallbacks);          
+
+    DoTrace(LEVEL_INFO, TFLAG_PNP,("DRIVER callbacks DriverSetDeviceCallbackEvents exit deviceInit=%p", _DeviceInit));
 }
 
 
@@ -154,7 +156,7 @@ Return Value:
 
     PAGED_CODE();
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, ("+DriverDeviceAdd: 0x%p", _Driver));
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO DriverDeviceAdd entry driver=%p deviceInit=%p", _Driver, _DeviceInit));
 
     //
     // Get device specific parameters, such as baudrate
@@ -217,7 +219,7 @@ Return Value:
                              &Attributes, 
                              &Device);
     if (!NT_SUCCESS(Status)) {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" WdfDeveiceCreate failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO DriverDeviceAdd WdfDeviceCreate failed status=%!STATUS!", Status));
         return Status;
     }   
 
@@ -243,6 +245,7 @@ Return Value:
     //
     Status = WdfWaitLockCreate(&Attributes, &FdoExtension->ChildLock);
     if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO DriverDeviceAdd WdfWaitLockCreate failed status=%!STATUS!", Status));
         return Status;
     }
 
@@ -284,7 +287,7 @@ Return Value:
                               &Queue);
     __analysis_assume(QueueConfig.EvtIoStop == 0);
     if (!NT_SUCCESS(Status)) {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" WdfIoQueueCreate failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO DriverDeviceAdd WdfIoQueueCreate failed status=%!STATUS!", Status));
         return Status;
     }
 
@@ -297,7 +300,7 @@ Return Value:
                                             &GUID_DEVINTERFACE_BLUETOOTH_RADIO_ONOFF_VENDOR_SPECIFIC,
                                             NULL /* No Reference String */  );
     if (!NT_SUCCESS(Status)) {
-        DoTrace(LEVEL_ERROR, TFLAG_PNP, (" WdfDeviceCreateDeviceInterface failed %!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO DriverDeviceAdd WdfDeviceCreateDeviceInterface failed status=%!STATUS!", Status));
         return Status;
     }
 
@@ -316,7 +319,7 @@ Return Value:
     // Note: Do static PDO enumeration in FdoDevPrepareHardware PnP callback
     //
 
-    DoTrace(LEVEL_INFO, TFLAG_PNP, ("-DriverDeviceAdd: exit %!STATUS!", Status));
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("FDO DriverDeviceAdd exit device=%p queue=%p status=%!STATUS!", Device, Queue, Status));
 
     return Status;
 }
@@ -371,6 +374,8 @@ Return Value:
     }
 
     WPP_INIT_TRACING(_DriverObject, _RegistryPath);
+
+    DoTrace(LEVEL_INFO, TFLAG_PNP, ("DRIVER load DriverEntry exit driverObject=%p status=%!STATUS!", _DriverObject, Status));
 
     return Status;
 
