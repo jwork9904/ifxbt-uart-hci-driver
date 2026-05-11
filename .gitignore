@@ -1,9 +1,12 @@
 .vs/
-*.VC.db
-*.VC.opendb
-Debug/
-Release/
 ARM64/
 x64/
+Win32/
+Debug/
+Release/
 *.user
 *.suo
+*.VC.db
+*.opendb
+*.tlog
+*.log
