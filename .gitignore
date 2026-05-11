@@ -1,9 +1,9 @@
 .vs/
-ARM64/
-x64/
-Win32/
-Debug/
-Release/
+**/ARM64/
+**/x64/
+**/Win32/
+**/Debug/
+**/Release/
 *.user
 *.suo
 *.VC.db
