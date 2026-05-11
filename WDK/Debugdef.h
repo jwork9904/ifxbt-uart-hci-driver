@@ -2,11 +2,11 @@
 #define __DEBUGDEF_H__
 
 //
-// SerialBusWdk's control Guid
-// {a2bf23a4-bc00-4903-81f2-6fbd82ad2d13}
+// IfxBtUartHci's control Guid
+// {a632892b-d668-42d0-ac12-d2503258d108}
 //
 #define WPP_CONTROL_GUIDS \
-    WPP_DEFINE_CONTROL_GUID(serialbuswdk,(a2bf23a4,bc00,4903,81f2,6fbd82ad2d13),  \
+    WPP_DEFINE_CONTROL_GUID(ifxbtuarthci,(a632892b,d668,42d0,ac12,d2503258d108),  \
         WPP_DEFINE_BIT(TFLAG_PNP)           \
         WPP_DEFINE_BIT(TFLAG_POWER)         \
         WPP_DEFINE_BIT(TFLAG_UART)          \

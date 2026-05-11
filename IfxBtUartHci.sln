@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2013
 VisualStudioVersion = 12.0
 MinimumVisualStudioVersion = 12.0
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SerialBusWdk", "WDK\SerialBusWdk.vcxproj", "{F8EFDBF2-B339-413F-94F5-AEB55DCCBA01}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "IfxBtUartHci", "WDK\IfxBtUartHci.vcxproj", "{F8EFDBF2-B339-413F-94F5-AEB55DCCBA01}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

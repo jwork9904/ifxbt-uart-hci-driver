@@ -1,6 +1,6 @@
 ---
 page_type: sample
-description: "Demonstrates how to implement a basic bus driver to support the new Bluetooth Extensibility transport DDIs over the UART transport."
+description: "Infineon CYW55571 Bluetooth UART HCI transport driver base derived from Microsoft's Bluetooth Serial HCI Bus Driver sample."
 languages:
 - cpp
 products:
@@ -8,7 +8,9 @@ products:
 - windows-wdk
 ---
 
-# Bluetooth Serial HCI Bus Driver
+# Infineon CYW55571 Bluetooth UART HCI Transport
+
+This working driver base is derived from Microsoft's Bluetooth Serial HCI Bus Driver sample. Microsoft sample attribution, architecture notes, and vendor-porting guidance are preserved below.
 
 The purpose of this sample is to demonstrate how to implement a basic bus driver to support the new [Bluetooth Extensibility transport DDIs](https://docs.microsoft.com/windows-hardware/drivers/ddi/content/bthxddi/) over the UART transport. Such a serial bus driver can support a multi-radio device over the UART transport and utilize a common Bluetooth HCI packet for communication. The lower edge of this driver interfaces with a UART controller following the Bluetooth SIG's UART (H4) transport protocol.
 
@@ -49,7 +51,7 @@ Note: The goal is to keep the common code section the same, so the vendor will o
 
 ### Device-specific code section
 
-Debugdef.h - WPP trace GUID; user should use a new GUID (unique per driver)
+Debugdef.h - WPP trace provider name and GUID for this driver
 
 device.c - device specific functions to implement:
 
@@ -67,4 +69,4 @@ device.h - header file for device.c
 
 driver.rc - driver version and name
 
-SerialBusWdk.inx - device specific INF file to install this driver. The vendor will need to add the hardware ID to match the "\_HID" for the Serial Bus Device (Bluetooth) in the DSCY.asl file. For example, in SerialBusWDK.inx, the hardware ID is "ACPI\\<*vendor*\>\_BTH0" where <*vendor*\> could be a 4 digit vendor name.
+IfxBtUartHci.inx - device specific INF file to install this driver. The vendor will need to add the hardware ID to match the "\_HID" for the Serial Bus Device (Bluetooth) in the DSCY.asl file. For example, the hardware ID is "ACPI\\<*vendor*\>\_BTH0" where <*vendor*> could be a 4 digit vendor name.

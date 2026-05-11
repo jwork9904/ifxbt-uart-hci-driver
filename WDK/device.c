@@ -34,7 +34,7 @@ Routine Description:
 
     Query driver's registry location for device specific parameter, such as baudrate.
 
-        HLM\system\CCS\Services\serialhcibus\Parameters\
+        HLM\system\CCS\Services\IfxBtUartHci\Parameters\
         
             KeyName/Type/value
 
