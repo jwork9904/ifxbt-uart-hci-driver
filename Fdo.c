@@ -85,6 +85,87 @@ TraceHciTxSummary(
             TraceBytes[15]));
 }
 
+static
+NTSTATUS
+ValidateHciTxWriteContext(
+    _In_ PBTHX_HCI_READ_WRITE_CONTEXT HciContext,
+    _In_ size_t PayloadAvailable
+    )
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG DataLen = HciContext->DataLen;
+    PUCHAR Data = HciContext->Data;
+    ULONG ExpectedLen;
+    ULONG Opcode;
+    ULONG ParamsCount;
+    ULONG AclPayloadLen;
+    const ULONG CommandHeaderLength = (ULONG) HCI_COMMAND_HEADER_LEN;
+    const ULONG AclHeaderLength = (ULONG) HCI_ACL_HEADER_SIZE;
+
+    if ((size_t) DataLen > PayloadAvailable) {
+        Status = STATUS_INVALID_PARAMETER;
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE invalid_datalen type=%d hciLen=%d payloadAvailable=%d status=%!STATUS!",
+                HciContext->Type, DataLen, (ULONG) PayloadAvailable, Status));
+        goto Done;
+    }
+
+    switch ((BTHX_HCI_PACKET_TYPE) HciContext->Type) {
+    case HciPacketCommand:
+        if (DataLen < CommandHeaderLength || DataLen > MAX_HCI_CMD_SIZE) {
+            Status = STATUS_INVALID_PARAMETER;
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE command_invalid_length hciLen=%d minLen=%d maxLen=%d status=%!STATUS!",
+                    DataLen, CommandHeaderLength, MAX_HCI_CMD_SIZE, Status));
+            goto Done;
+        }
+
+        Opcode = ((ULONG) Data[1] << 8) | Data[0];
+        ParamsCount = Data[2];
+        ExpectedLen = CommandHeaderLength + ParamsCount;
+
+        if (ExpectedLen != DataLen) {
+            Status = STATUS_INVALID_PARAMETER;
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE command_length_mismatch opcode=0x%x hciLen=%d paramsCount=%d expectedLen=%d status=%!STATUS!",
+                    Opcode, DataLen, ParamsCount, ExpectedLen, Status));
+            goto Done;
+        }
+        break;
+
+    case HciPacketAclData:
+        if (DataLen < AclHeaderLength || DataLen > MAX_HCI_ACLDATA_SIZE) {
+            Status = STATUS_INVALID_PARAMETER;
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE acl_invalid_length hciLen=%d minLen=%d maxLen=%d status=%!STATUS!",
+                    DataLen, AclHeaderLength, MAX_HCI_ACLDATA_SIZE, Status));
+            goto Done;
+        }
+
+        AclPayloadLen = ((ULONG) Data[3] << 8) | Data[2];
+        if (AclPayloadLen > HCI_MAX_ACL_PAYLOAD_SIZE) {
+            Status = STATUS_INVALID_PARAMETER;
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE acl_payload_too_large hciLen=%d aclPayloadLen=%d maxPayloadLen=%d status=%!STATUS!",
+                    DataLen, AclPayloadLen, HCI_MAX_ACL_PAYLOAD_SIZE, Status));
+            goto Done;
+        }
+
+        ExpectedLen = AclHeaderLength + AclPayloadLen;
+        if (ExpectedLen != DataLen) {
+            Status = STATUS_INVALID_PARAMETER;
+            DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE acl_length_mismatch hciLen=%d aclPayloadLen=%d expectedLen=%d status=%!STATUS!",
+                    DataLen, AclPayloadLen, ExpectedLen, Status));
+            goto Done;
+        }
+        break;
+
+    default:
+        Status = STATUS_INVALID_PARAMETER;
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("HCI_TX_VALIDATE invalid_type type=%d status=%!STATUS!",
+                HciContext->Type, Status));
+        goto Done;
+    }
+
+Done:
+    return Status;
+}
+
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, FdoCreateOneChildDevice)
 #pragma alloc_text (PAGE, FdoRemoveOneChildDevice)
@@ -1977,7 +2058,8 @@ Return Value:
     WDFDEVICE   Device;
     BOOLEAN CompleteRequest = FALSE;
     ULONG ControlCode = (_IoControlCode & 0x00003ffc) >> 2;
-    ULONG HciPayloadAvailable = 0;
+    size_t HciPayloadAvailable = 0;
+    size_t HciContextHeaderSize = FIELD_OFFSET(BTHX_HCI_READ_WRITE_CONTEXT, Data);
     ULONG UartLength = 0;
     BTHX_HCI_PACKET_TYPE PacketType;
     PBTHX_HCI_READ_WRITE_CONTEXT HCIContext;
@@ -2020,7 +2102,7 @@ Return Value:
     case IOCTL_BTHX_WRITE_HCI:
         DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL write_hci code=0x%x inSize=%d outSize=%d", _IoControlCode, (ULONG) InBufferSize, (ULONG) OutBufferSize));
         // Validate input and output parameters
-        if (!InBuffer || InBufferSize < sizeof(BTHX_HCI_READ_WRITE_CONTEXT) ||
+        if (!InBuffer || InBufferSize < HciContextHeaderSize ||
             !OutBuffer || OutBufferSize != sizeof(BTHX_HCI_PACKET_TYPE))
         {
             Status = STATUS_INVALID_PARAMETER;
@@ -2040,9 +2122,15 @@ Return Value:
             break;
         }
 
-        HciPayloadAvailable = (ULONG)(InBufferSize - FIELD_OFFSET(BTHX_HCI_READ_WRITE_CONTEXT, Data));
+        HciPayloadAvailable = InBufferSize - HciContextHeaderSize;
+        Status = ValidateHciTxWriteContext(HCIContext, HciPayloadAvailable);
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+
         UartLength = (ULONG) sizeof(HCIContext->Type) + HCIContext->DataLen;
-        TraceHciTxSummary(HCIContext, UartLength, HciPayloadAvailable);
+        TraceHciTxSummary(HCIContext, UartLength, HCIContext->DataLen);
 
         if (PacketType == HciPacketCommand)
         {
