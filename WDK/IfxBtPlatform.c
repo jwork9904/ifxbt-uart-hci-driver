@@ -61,6 +61,7 @@ static const IFXBT_PLATFORM_CONFIG IfxBtPlatformConfig = {
     IFXBT_PLATFORM_GPIO_BT_REG_ON_PLACEHOLDER,
     IFXBT_PLATFORM_GPIO_HOST_WAKE_PLACEHOLDER,
     IFXBT_PLATFORM_GPIO_DEV_WAKE_PLACEHOLDER,
+    IfxBtPlatformPowerResourcesPlaceholderOnly,
     IfxBtPlatformFirmwareSequencePlaceholderUnknown, // TODO_REAL_FIRMWARE_SEQUENCE PLACEHOLDER_PLATFORM_VALUE
     TRUE
 };
@@ -98,6 +99,11 @@ IfxBtPlatformValidateConfig(
         goto Exit;
     }
 
+    Status = IfxBtPlatformValidatePowerResources(Config);
+    if (!NT_SUCCESS(Status)) {
+        goto Exit;
+    }
+
     if (Config->UartFlowControlPlaceholder != IfxBtPlatformUartFlowControlPlaceholderUnknown) {
         Status = STATUS_INVALID_PARAMETER;
         goto Exit;
@@ -116,6 +122,88 @@ IfxBtPlatformValidateConfig(
 Exit:
 
     return Status;
+}
+
+NTSTATUS
+IfxBtPlatformValidatePowerResources(
+    _In_ const IFXBT_PLATFORM_CONFIG* Config
+    )
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_PLACEHOLDER validate_power_resources entry config=%p",
+            Config));
+
+    if (Config == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (Config->Size != (ULONG)sizeof(IFXBT_PLATFORM_CONFIG)) {
+        Status = STATUS_INFO_LENGTH_MISMATCH;
+        goto Exit;
+    }
+
+    if (Config->ResetGpioPlaceholder == NULL ||
+        Config->RegOnGpioPlaceholder == NULL ||
+        Config->HostWakeGpioPlaceholder == NULL ||
+        Config->DevWakeGpioPlaceholder == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (Config->PowerResourceState != IfxBtPlatformPowerResourcesPlaceholderOnly) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+Exit:
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_PLACEHOLDER validate_power_resources failed status=%!STATUS!",
+                Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_PLACEHOLDER validate_power_resources placeholder_only status=%!STATUS!",
+                Status));
+    }
+
+    return Status;
+}
+
+VOID
+IfxBtPlatformLogPowerPlaceholderConfig(
+    _In_ const IFXBT_PLATFORM_CONFIG* Config
+    )
+{
+    PCWSTR ResetGpioPlaceholder;
+    PCWSTR RegOnGpioPlaceholder;
+    PCWSTR HostWakeGpioPlaceholder;
+    PCWSTR DevWakeGpioPlaceholder;
+
+    if (Config == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_PLACEHOLDER missing config"));
+        return;
+    }
+
+    ResetGpioPlaceholder = (Config->ResetGpioPlaceholder != NULL) ? Config->ResetGpioPlaceholder : L"<null>";
+    RegOnGpioPlaceholder = (Config->RegOnGpioPlaceholder != NULL) ? Config->RegOnGpioPlaceholder : L"<null>";
+    HostWakeGpioPlaceholder = (Config->HostWakeGpioPlaceholder != NULL) ? Config->HostWakeGpioPlaceholder : L"<null>";
+    DevWakeGpioPlaceholder = (Config->DevWakeGpioPlaceholder != NULL) ? Config->DevWakeGpioPlaceholder : L"<null>";
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER power resources are placeholder-only state=%d no GPIO operations performed",
+            Config->PowerResourceState));
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER symbolic_only reset=%S reg_on=%S host_wake=%S dev_wake=%S",
+            ResetGpioPlaceholder,
+            RegOnGpioPlaceholder,
+            HostWakeGpioPlaceholder,
+            DevWakeGpioPlaceholder));
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER TODO_REAL_GPIO_RESOURCES required before real control"));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER real data required polarity timing power ownership wake trigger"));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("RESET_PLACEHOLDER reset sequence unknown no reset asserted no reset timing applied"));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_PLACEHOLDER wake resources unknown no HOST_WAKE interrupt programmed no DEV_WAKE protocol applied"));
 }
 
 VOID
@@ -143,4 +231,6 @@ IfxBtPlatformLogConfig(
             Config->FirmwareSequenceState));
 
     DoTrace(LEVEL_INFO, TFLAG_PNP, ("PLATFORM_CONFIG gpio_placeholders symbolic_only no_real_gpio_resources_configured"));
+
+    IfxBtPlatformLogPowerPlaceholderConfig(Config);
 }

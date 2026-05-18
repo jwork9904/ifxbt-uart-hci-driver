@@ -30,6 +30,10 @@ typedef enum _IFXBT_PLATFORM_FIRMWARE_SEQUENCE_STATE {
     IfxBtPlatformFirmwareSequencePlaceholderUnknown = 0
 } IFXBT_PLATFORM_FIRMWARE_SEQUENCE_STATE;
 
+typedef enum _IFXBT_PLATFORM_POWER_RESOURCE_STATE {
+    IfxBtPlatformPowerResourcesPlaceholderOnly = 0
+} IFXBT_PLATFORM_POWER_RESOURCE_STATE;
+
 typedef struct _IFXBT_PLATFORM_CONFIG {
     ULONG Size;
     PCWSTR PlatformName;
@@ -40,6 +44,7 @@ typedef struct _IFXBT_PLATFORM_CONFIG {
     PCWSTR RegOnGpioPlaceholder;
     PCWSTR HostWakeGpioPlaceholder;
     PCWSTR DevWakeGpioPlaceholder;
+    IFXBT_PLATFORM_POWER_RESOURCE_STATE PowerResourceState;
     IFXBT_PLATFORM_FIRMWARE_SEQUENCE_STATE FirmwareSequenceState;
     BOOLEAN PlaceholderPlatformValue;
 } IFXBT_PLATFORM_CONFIG, *PIFXBT_PLATFORM_CONFIG;
@@ -54,6 +59,16 @@ IfxBtPlatformValidateConfig(
 
 VOID
 IfxBtPlatformLogConfig(
+    _In_ const IFXBT_PLATFORM_CONFIG* Config
+    );
+
+NTSTATUS
+IfxBtPlatformValidatePowerResources(
+    _In_ const IFXBT_PLATFORM_CONFIG* Config
+    );
+
+VOID
+IfxBtPlatformLogPowerPlaceholderConfig(
     _In_ const IFXBT_PLATFORM_CONFIG* Config
     );
 

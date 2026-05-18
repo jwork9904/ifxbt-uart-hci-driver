@@ -26,6 +26,29 @@ Environment:
 
 #define STR_BAUDRATE    L"BaudRateIndex"  
 
+static
+VOID
+IfxBtDeviceLogPowerPlaceholderState(
+    _In_ PCWSTR Operation
+    )
+{
+    const IFXBT_PLATFORM_CONFIG* PlatformConfig;
+    NTSTATUS PowerResourceStatus;
+
+    PlatformConfig = IfxBtPlatformGetConfig();
+    PowerResourceStatus = IfxBtPlatformValidatePowerResources(PlatformConfig);
+
+    if (!NT_SUCCESS(PowerResourceStatus)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_PLACEHOLDER operation=%S power resource validation failed status=%!STATUS!",
+                Operation, PowerResourceStatus));
+    }
+
+    IfxBtPlatformLogPowerPlaceholderConfig(PlatformConfig);
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER operation=%S scaffold only no GPIO targets opened no hardware operation performed",
+            Operation));
+}
+
 VOID
 DeviceQueryDeviceParameters(
     _In_ WDFDRIVER  _Driver
@@ -104,6 +127,10 @@ Return Value:
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnableWakeControl entry device=%p powerState=%d",
             _Device, _PowerState));
+
+    IfxBtDeviceLogPowerPlaceholderState(L"DeviceEnableWakeControl");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_PLACEHOLDER DeviceEnableWakeControl no HOST_WAKE interrupt programmed no DEV_WAKE protocol applied"));
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnableWakeControl exit status=%!STATUS!", Status));
 
@@ -132,6 +159,11 @@ Return Value:
 --*/     
 {
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDisableWakeControl entry device=%p", _Device));
+
+    IfxBtDeviceLogPowerPlaceholderState(L"DeviceDisableWakeControl");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_PLACEHOLDER DeviceDisableWakeControl no wake GPIO or interrupt state changed"));
+
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDisableWakeControl exit device=%p", _Device));
    
     return;
@@ -307,6 +339,11 @@ Return Value:
     NTSTATUS Status = STATUS_SUCCESS;
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnable entry device=%p enabled=%d", _Device, _IsEnabled));
+
+    IfxBtDeviceLogPowerPlaceholderState(L"DeviceEnable");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER DeviceEnable enabled=%d no BT_REG_ON or reset GPIO toggled",
+            _IsEnabled));
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnable exit status=%!STATUS!", Status));
 
@@ -337,6 +374,10 @@ Return Value:
     NTSTATUS Status = STATUS_SUCCESS;
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOn entry device=%p", _Device));
+
+    IfxBtDeviceLogPowerPlaceholderState(L"DevicePowerOn");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER DevicePowerOn no regulator control no GPIO toggles no reset timing no power sequencing"));
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOn exit status=%!STATUS!", Status));
 
@@ -367,6 +408,10 @@ Return Value:
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOff entry device=%p", _Device));
 
+    IfxBtDeviceLogPowerPlaceholderState(L"DevicePowerOff");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER DevicePowerOff no-op placeholder no regulator control no GPIO toggles"));
+
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOff exit status=%!STATUS!", Status));
 
     return Status;
@@ -394,5 +439,10 @@ Return Value:
 --*/
 {
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR entry fdo=%p", _Fdo));
+
+    IfxBtDeviceLogPowerPlaceholderState(L"DeviceDoPLDR");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("RESET_PLACEHOLDER DeviceDoPLDR no hardware reset asserted no reset timing applied"));
+
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR exit fdo=%p", _Fdo));
 }
