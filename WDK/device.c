@@ -137,6 +137,72 @@ Return Value:
     return;
 }
 
+static
+NTSTATUS
+IfxBtConfigureUart(
+    _In_ PFDO_EXTENSION FdoExtension,
+    _In_ const IFXBT_PLATFORM_CONFIG* PlatformConfig,
+    _In_ BOOLEAN IsUartReset
+    )
+{
+    NTSTATUS Status = STATUS_DEVICE_NOT_READY;
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONFIG IfxBtConfigureUart entry fdoExtension=%p platformConfig=%p isUartReset=%d",
+            FdoExtension, PlatformConfig, IsUartReset));
+
+    if (FdoExtension == NULL || PlatformConfig == NULL)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG missing required context fdoExtension=%p platformConfig=%p status=%!STATUS!",
+                FdoExtension, PlatformConfig, Status));
+        goto Exit;
+    }
+
+    if (FdoExtension->IoTargetSerial == NULL || FdoExtension->RequestIoctlSync == NULL)
+    {
+        Status = STATUS_DEVICE_NOT_READY;
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG missing UART target or sync request ioTarget=%p request=%p status=%!STATUS!",
+                FdoExtension->IoTargetSerial, FdoExtension->RequestIoctlSync, Status));
+        goto Exit;
+    }
+
+    if (PlatformConfig->PlaceholderPlatformValue ||
+        PlatformConfig->InitialUartBaudPlaceholder == 0 ||
+        PlatformConfig->UartFlowControlPlaceholder == IfxBtPlatformUartFlowControlPlaceholderUnknown)
+    {
+        Status = STATUS_DEVICE_NOT_READY;
+        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG placeholder config active placeholder=%d status=%!STATUS!",
+                PlatformConfig->PlaceholderPlatformValue, Status));
+        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG uart baud unknown value=%lu real platform baud pending",
+                PlatformConfig->InitialUartBaudPlaceholder));
+        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG uart flow control unknown value=%d real platform flow control pending",
+                PlatformConfig->UartFlowControlPlaceholder));
+        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG line control pending real platform data"));
+        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG no serial IOCTLs issued"));
+        goto Exit;
+    }
+
+    //
+    // Real UART programming is intentionally deferred until platform baud,
+    // line-control, and flow-control values are provided.
+    //
+    Status = STATUS_NOT_IMPLEMENTED;
+    DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG real UART values present but IOCTL programming is not implemented status=%!STATUS!",
+            Status));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG no serial IOCTLs issued"));
+
+Exit:
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG IfxBtConfigureUart exit status=%!STATUS!", Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONFIG IfxBtConfigureUart exit status=%!STATUS!", Status));
+    }
+
+    return Status;
+}
+
 BOOLEAN
 DeviceInitialize(
     _In_  PFDO_EXTENSION _FdoExtension,
@@ -169,6 +235,7 @@ Return Value:
     BOOLEAN Initialized = TRUE;
     const IFXBT_PLATFORM_CONFIG* PlatformConfig;
     NTSTATUS PlatformStatus;
+    NTSTATUS UartStatus;
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
             _FdoExtension, _IoTargetSerial, _RequestSync, _IsUartReset));
@@ -193,9 +260,16 @@ Return Value:
 
     IfxBtPlatformLogConfig(PlatformConfig);
 
-    //
-    // Vendor specifc operation;
-    // 
+    UartStatus = IfxBtConfigureUart(_FdoExtension,
+                                    PlatformConfig,
+                                    _IsUartReset);
+    if (!NT_SUCCESS(UartStatus))
+    {
+        Initialized = FALSE;
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize UART configuration pending or failed status=%!STATUS!",
+                UartStatus));
+        goto Exit;
+    }
 
 Exit:
 
