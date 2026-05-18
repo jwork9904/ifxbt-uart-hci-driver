@@ -787,6 +787,10 @@ Return Value:
 
     FdoExtension = FdoGetExtension(_Device);
 
+    FdoExtension->UARTConnectionId.QuadPart = 0;
+    FdoExtension->I2CConnectionId.QuadPart = 0;
+    FdoExtension->GPIOConnectionId.QuadPart = 0;
+
     Status = STATUS_SUCCESS;
 
     //
@@ -799,6 +803,11 @@ Return Value:
     for (Index = 0; Index < ResourceCount; Index++)
     {
         Descriptor = WdfCmResourceListGetDescriptor(_ResourcesTranslated, Index);
+        if (Descriptor == NULL)
+        {
+            DoTrace(LEVEL_WARNING, TFLAG_PNP,("PNP resource_discovery null descriptor index=%d", Index));
+            continue;
+        }
 
         switch(Descriptor->Type)
         {
@@ -864,7 +873,7 @@ Return Value:
     if (!UartConnectionIdIsFound)
     {
         Status = STATUS_NOT_FOUND;
-        DoTrace(LEVEL_WARNING, TFLAG_PNP,("PNP resource_discovery UART ConnectionID not found status=%!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP,("PNP resource_discovery missing required UART connection resource status=%!STATUS!", Status));
     }
 
     DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery FdoFindConnectResources exit resourceCount=%d status=%!STATUS!", ResourceCount, Status));
@@ -897,15 +906,53 @@ Return Value:
 --*/
 {
     NTSTATUS Status = STATUS_SUCCESS;
-    WDFIOTARGET IoTargetSerial;
+    WDFIOTARGET IoTargetSerial = NULL;
     PFDO_EXTENSION FdoExtension = NULL;
     WCHAR TargetDeviceNameBuffer[100];
-    PWSTR SymbolicLinkList = NULL;
     UNICODE_STRING TargetDeviceName;
 
     WDF_IO_TARGET_OPEN_PARAMS   OpenParams;
 
     DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN FdoOpenDevice entry device=%p", _Device));
+
+    if (_pIoTarget == NULL)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+        DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN invalid output target pointer status=%!STATUS!", Status));
+        goto Exit;
+    }
+
+    *_pIoTarget = NULL;
+
+    FdoExtension = FdoGetExtension(_Device);
+
+    //
+    // On this ACPI UART transport path, the UART connection ID is required.
+    //
+
+    if (!ValidConnectionID(FdoExtension->UARTConnectionId))
+    {
+        Status = STATUS_NOT_FOUND;
+        DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN missing ACPI UART connection; COM fallback disabled for placeholder/platform path status=%!STATUS!", Status));
+        goto Exit;
+    }
+
+    DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN using ConnectionID high=0x%x low=0x%x",
+            FdoExtension->UARTConnectionId.HighPart,
+            FdoExtension->UARTConnectionId.LowPart));
+
+    RtlInitEmptyUnicodeString(&TargetDeviceName,
+                              TargetDeviceNameBuffer,
+                              sizeof(TargetDeviceNameBuffer));
+
+    Status = RESOURCE_HUB_CREATE_PATH_FROM_ID(&TargetDeviceName,
+                                              FdoExtension->UARTConnectionId.LowPart,
+                                              FdoExtension->UARTConnectionId.HighPart);
+    if (!NT_SUCCESS(Status))
+    {
+        DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN RESOURCE_HUB_CREATE_PATH_FROM_ID failed status=%!STATUS!", Status));
+        goto Exit;
+    }
 
     Status = WdfIoTargetCreate(_Device,
                                WDF_NO_OBJECT_ATTRIBUTES,
@@ -915,60 +962,6 @@ Return Value:
     {
         DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN WdfIoTargetCreate failed status=%!STATUS!", Status));
         goto Exit;
-    }
-
-    FdoExtension = FdoGetExtension(_Device);
-
-    //
-    // On SoC platform, a valid connection ID to a UART is set; if not, the legacy way
-    // of enumerating serial device interface is used.
-    //
-
-    if (ValidConnectionID(FdoExtension->UARTConnectionId))
-    {
-        DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN using ConnectionID high=0x%x low=0x%x",
-                FdoExtension->UARTConnectionId.HighPart,
-                FdoExtension->UARTConnectionId.LowPart));
-
-        RtlInitEmptyUnicodeString(&TargetDeviceName,
-                                  TargetDeviceNameBuffer,
-                                  sizeof(TargetDeviceNameBuffer));
-
-        Status = RESOURCE_HUB_CREATE_PATH_FROM_ID(&TargetDeviceName,
-                                                  FdoExtension->UARTConnectionId.LowPart,
-                                                  FdoExtension->UARTConnectionId.HighPart);
-        if (!NT_SUCCESS(Status))
-        {
-            DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN RESOURCE_HUB_CREATE_PATH_FROM_ID failed status=%!STATUS!", Status));
-            goto Exit;
-        }
-    }
-    else
-    {
-        // Query the system for device with SERIAL interface
-        Status = IoGetDeviceInterfaces(&GUID_DEVINTERFACE_COMPORT,
-                                       NULL,
-                                       0,
-                                       &SymbolicLinkList   // List of symbolic names; separate by NULL, EOL with NULL+NULL.
-                                       );
-
-        if (!NT_SUCCESS(Status))
-        {
-            DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN IoGetDeviceInterfaces failed status=%!STATUS!", Status));
-            goto Exit;
-        }
-
-        // Check for empty list
-        if (*SymbolicLinkList == L'\0')
-        {
-            Status = STATUS_DEVICE_DOES_NOT_EXIST;
-            DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN IoGetDeviceInterfaces returned empty list status=%!STATUS!", Status));
-            goto Exit;
-        }
-
-        // A list of devices is returned, we use only the first one.
-        // ACPI component will enuermate us and this step is not necessary.
-        RtlInitUnicodeString(&TargetDeviceName, SymbolicLinkList);
     }
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_OPEN targetPath=%S", TargetDeviceName.Buffer));
@@ -991,18 +984,13 @@ Return Value:
     {
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN WdfIoTargetOpen failed status=%!STATUS!", Status));
         WdfObjectDelete(IoTargetSerial);
+        IoTargetSerial = NULL;
         goto Exit;
     }
 
     *_pIoTarget = IoTargetSerial;
 
 Exit:
-
-    if (SymbolicLinkList)
-    {
-        ExFreePool(SymbolicLinkList);
-        SymbolicLinkList = NULL;
-    }
 
     if (!NT_SUCCESS(Status)) {
         DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN FdoOpenDevice exit status=%!STATUS!", Status));
@@ -1198,10 +1186,9 @@ Return Value:
     if (!NT_SUCCESS(Status))
     {
         DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware FdoFindConnectResources failed status=%!STATUS!", Status));
-
-        // Log(Informational): no UART Connection ID resource
-
-        // Can still use the legacy approach to find it based on its serial interface GUID.
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP missing required UART resource; failing PrepareHardware"));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children skipped because parent transport is not ready status=%!STATUS!", Status));
+        goto Exit;
     }
 
     FdoExtension = FdoGetExtension(_Device);
@@ -1214,6 +1201,7 @@ Return Value:
     if (!NT_SUCCESS(Status) || FdoExtension->IoTargetSerial == NULL)
     {
         DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware FdoOpenDevice failed status=%!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children skipped because UART open failed status=%!STATUS!", Status));
 
         // Log(Error): Failed to open UART controller
         goto Exit;
@@ -1271,6 +1259,7 @@ Return Value:
         // Can have issue if this UART device cannot be initalized
         Status = STATUS_DEVICE_NOT_READY;
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevPrepareHardware DeviceInitialize failed status=%!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children skipped because parent transport initialization failed status=%!STATUS!", Status));
 
         // Log(Error): Failed to intialize/configure the device
         goto Exit;

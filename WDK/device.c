@@ -170,9 +170,19 @@ Return Value:
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
             _FdoExtension, _IoTargetSerial, _RequestSync, _IsUartReset));
 
+    if (_FdoExtension == NULL || _IoTargetSerial == NULL || _RequestSync == NULL)
+    {
+        Initialized = FALSE;
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize missing required context fdoExtension=%p ioTarget=%p request=%p",
+                _FdoExtension, _IoTargetSerial, _RequestSync));
+        goto Exit;
+    }
+
     //
     // Vendor specifc operation;
     // 
+
+Exit:
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize exit initialized=%d", Initialized));
 
