@@ -76,7 +76,7 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
   </ImportGroup>
   <ItemGroup Label="WrappedTaskItems">
-    <ClCompile Include="..\fdo.c; device.c; ..\io.c; ..\pdo.c; ..\driver.c">
+    <ClCompile Include="..\fdo.c; device.c; IfxBtPlatform.c; ..\io.c; ..\pdo.c; ..\driver.c">
       <WppEnabled>true</WppEnabled>
       <WppKernelMode>true</WppKernelMode>
       <WppTraceFunction>DoTrace(LEVEL,FLAG,(MSG,...))</WppTraceFunction>

@@ -16,7 +16,8 @@ Environment:
 
 --*/
 
-#include "driver.h"  
+#include "driver.h"
+#include "IfxBtPlatform.h"
 #include "Device.tmh"
     
 #ifdef ALLOC_PRAGMA
@@ -166,6 +167,8 @@ Return Value:
 --*/    
 {
     BOOLEAN Initialized = TRUE;
+    const IFXBT_PLATFORM_CONFIG* PlatformConfig;
+    NTSTATUS PlatformStatus;
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
             _FdoExtension, _IoTargetSerial, _RequestSync, _IsUartReset));
@@ -177,6 +180,18 @@ Return Value:
                 _FdoExtension, _IoTargetSerial, _RequestSync));
         goto Exit;
     }
+
+    PlatformConfig = IfxBtPlatformGetConfig();
+    PlatformStatus = IfxBtPlatformValidateConfig(PlatformConfig);
+    if (!NT_SUCCESS(PlatformStatus))
+    {
+        Initialized = FALSE;
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize platform config validation failed status=%!STATUS!",
+                PlatformStatus));
+        goto Exit;
+    }
+
+    IfxBtPlatformLogConfig(PlatformConfig);
 
     //
     // Vendor specifc operation;
