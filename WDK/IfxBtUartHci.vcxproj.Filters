@@ -37,6 +37,9 @@
     <ClCompile Include="IfxBtPlatform.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="IfxBtFirmware.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="driver.rc">
@@ -45,6 +48,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="IfxBtPlatform.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="IfxBtFirmware.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

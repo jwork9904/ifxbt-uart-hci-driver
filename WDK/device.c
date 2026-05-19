@@ -18,6 +18,7 @@ Environment:
 
 #include "driver.h"
 #include "IfxBtPlatform.h"
+#include "IfxBtFirmware.h"
 #include "Device.tmh"
     
 #ifdef ALLOC_PRAGMA
@@ -267,6 +268,7 @@ Return Value:
     BOOLEAN Initialized = TRUE;
     const IFXBT_PLATFORM_CONFIG* PlatformConfig;
     NTSTATUS PlatformStatus;
+    NTSTATUS FirmwareStatus;
     NTSTATUS UartStatus;
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
@@ -291,6 +293,17 @@ Return Value:
     }
 
     IfxBtPlatformLogConfig(PlatformConfig);
+
+    FirmwareStatus = IfxBtFirmwareValidatePlaceholderState(PlatformConfig);
+    if (!NT_SUCCESS(FirmwareStatus))
+    {
+        Initialized = FALSE;
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("DEVICE_STUB DeviceInitialize firmware placeholder validation failed status=%!STATUS!",
+                FirmwareStatus));
+        goto Exit;
+    }
+
+    IfxBtFirmwareLogPlaceholderState(PlatformConfig);
 
     UartStatus = IfxBtConfigureUart(_FdoExtension,
                                     PlatformConfig,
