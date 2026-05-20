@@ -166,6 +166,111 @@ Done:
     return Status;
 }
 
+static
+VOID
+IfxBtSetTransportState(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_TRANSPORT_STATE NewState,
+    _In_ NTSTATUS Status
+    )
+{
+    IFXBT_TRANSPORT_STATE OldState;
+
+    if (FdoExtension == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_STATE missing_context new=%d status=%!STATUS!",
+                NewState, Status));
+        return;
+    }
+
+    OldState = FdoExtension->TransportState;
+    FdoExtension->TransportState = NewState;
+
+    if (NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("IFXBT_STATE old=%d new=%d status=%!STATUS!",
+                OldState, NewState, Status));
+    }
+    else {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_STATE old=%d new=%d status=%!STATUS!",
+                OldState, NewState, Status));
+    }
+}
+
+static
+VOID
+IfxBtSetFailureReason(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_FAILURE_REASON Reason,
+    _In_ NTSTATUS Status
+    )
+{
+    if (FdoExtension == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_FAIL missing_context reason=%d status=%!STATUS!",
+                Reason, Status));
+        return;
+    }
+
+    FdoExtension->LastFailureReason = Reason;
+    FdoExtension->LastFailureStatus = Status;
+
+    if (Reason == IfxBtFailureNone) {
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("IFXBT_FAIL reason=%d status=%!STATUS!",
+                Reason, Status));
+    }
+    else {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_FAIL reason=%d status=%!STATUS!",
+                Reason, Status));
+    }
+
+    if (Reason != IfxBtFailureNone) {
+        IfxBtSetTransportState(FdoExtension,
+                               IfxBtTransportStateFailed,
+                               Status);
+    }
+}
+
+static
+BOOLEAN
+IfxBtIsParentTransportReady(
+    _In_opt_ PFDO_EXTENSION FdoExtension
+    )
+{
+    BOOLEAN Ready;
+    NTSTATUS Status;
+
+    if (FdoExtension == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_READY ready=0 state=%d reason=%d status=%!STATUS!",
+                -1, -1, STATUS_INVALID_PARAMETER));
+        return FALSE;
+    }
+
+    Ready = (FdoExtension->TransportState == IfxBtTransportStateOperational &&
+             FdoExtension->LastFailureReason == IfxBtFailureNone &&
+             IsDeviceInitialized(FdoExtension) &&
+             FdoExtension->IoTargetSerial != NULL);
+
+    Status = Ready ? STATUS_SUCCESS : FdoExtension->LastFailureStatus;
+    if (Status == STATUS_SUCCESS && Ready == FALSE) {
+        Status = STATUS_DEVICE_NOT_READY;
+    }
+
+    if (Ready) {
+        DoTrace(LEVEL_INFO, TFLAG_PNP, ("IFXBT_READY ready=%d state=%d reason=%d status=%!STATUS!",
+                Ready,
+                FdoExtension->TransportState,
+                FdoExtension->LastFailureReason,
+                Status));
+    }
+    else {
+        DoTrace(LEVEL_WARNING, TFLAG_PNP, ("IFXBT_READY ready=%d state=%d reason=%d status=%!STATUS!",
+                Ready,
+                FdoExtension->TransportState,
+                FdoExtension->LastFailureReason,
+                Status));
+    }
+
+    return Ready;
+}
+
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (PAGE, FdoCreateOneChildDevice)
 #pragma alloc_text (PAGE, FdoRemoveOneChildDevice)
@@ -268,6 +373,9 @@ Return Value:
 --*/
 {
     PPDO_IDENTIFICATION_DESCRIPTION pDesc;
+    PFDO_EXTENSION FdoExtension;
+    WDFDEVICE Fdo;
+    NTSTATUS Status;
 
     PAGED_CODE();
 
@@ -275,7 +383,20 @@ Return Value:
                               PDO_IDENTIFICATION_DESCRIPTION,
                               Header);
 
-    return PdoCreateDynamic(WdfChildListGetDevice(DeviceList),
+    Fdo = WdfChildListGetDevice(DeviceList);
+    FdoExtension = FdoGetExtension(Fdo);
+
+    if (!IfxBtIsParentTransportReady(FdoExtension)) {
+        Status = FdoExtension->LastFailureStatus;
+        if (Status == STATUS_SUCCESS) {
+            Status = STATUS_DEVICE_NOT_READY;
+        }
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_child_dynamic callback blocked parent transport not ready serialNo=%d status=%!STATUS!",
+                pDesc->SerialNo, Status));
+        return Status;
+    }
+
+    return PdoCreateDynamic(Fdo,
                             ChildInit,
                             pDesc->HardwareIds,
                             pDesc->SerialNo);
@@ -303,9 +424,21 @@ Routine Description:
 
 {
     PDO_IDENTIFICATION_DESCRIPTION Description;
+    PFDO_EXTENSION  FdoExtension;
     NTSTATUS         Status;
 
     PAGED_CODE ();
+
+    FdoExtension = FdoGetExtension(_Device);
+    if (!IfxBtIsParentTransportReady(FdoExtension)) {
+        Status = FdoExtension->LastFailureStatus;
+        if (Status == STATUS_SUCCESS) {
+            Status = STATUS_DEVICE_NOT_READY;
+        }
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_child_dynamic blocked parent transport not ready serialNo=%d status=%!STATUS!",
+                _SerialNo, Status));
+        return Status;
+    }
 
     //
     // Initialize the description with the information about the newly
@@ -392,6 +525,16 @@ Returns:
     //
     FdoExtension = FdoGetExtension(_Device);
     ChildDevice = NULL;
+
+    if (!IfxBtIsParentTransportReady(FdoExtension)) {
+        Status = FdoExtension->LastFailureStatus;
+        if (Status == STATUS_SUCCESS) {
+            Status = STATUS_DEVICE_NOT_READY;
+        }
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_child blocked parent transport not ready serialNo=%d status=%!STATUS!",
+                _SerialNo, Status));
+        return Status;
+    }
 
     //
     // We need an additional lock to synchronize addition because
@@ -575,11 +718,21 @@ Returns:
     // This sample code only enuemrate the Bluetooth function as the only
     // child device.
     //
+    FdoExtension = FdoGetExtension(_Device);
+    if (!IfxBtIsParentTransportReady(FdoExtension)) {
+        Status = FdoExtension->LastFailureStatus;
+        if (Status == STATUS_SUCCESS) {
+            Status = STATUS_DEVICE_NOT_READY;
+        }
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children blocked parent transport not ready status=%!STATUS!",
+                Status));
+        return Status;
+    }
+
     Status = FdoCreateOneChildDevice(_Device,
                                      BT_PDO_HARDWARE_IDS,
                                      BLUETOOTH_FUNC_IDS);
 
-    FdoExtension = FdoGetExtension(_Device);
     if (NT_SUCCESS(Status)) {
         FdoExtension->IsRadioEnabled = TRUE;
     }
@@ -874,6 +1027,14 @@ Return Value:
     {
         Status = STATUS_NOT_FOUND;
         DoTrace(LEVEL_ERROR, TFLAG_PNP,("PNP resource_discovery missing required UART connection resource status=%!STATUS!", Status));
+        IfxBtSetFailureReason(FdoExtension,
+                              IfxBtFailureMissingUartResource,
+                              Status);
+    }
+    else {
+        IfxBtSetTransportState(FdoExtension,
+                               IfxBtTransportStateResourcesParsed,
+                               Status);
     }
 
     DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP resource_discovery FdoFindConnectResources exit resourceCount=%d status=%!STATUS!", ResourceCount, Status));
@@ -993,9 +1154,17 @@ Return Value:
 Exit:
 
     if (!NT_SUCCESS(Status)) {
+        if (FdoExtension != NULL) {
+            IfxBtSetFailureReason(FdoExtension,
+                                  IfxBtFailureUartOpenFailed,
+                                  Status);
+        }
         DoTrace(LEVEL_ERROR, TFLAG_UART,("UART_OPEN FdoOpenDevice exit status=%!STATUS!", Status));
     }
     else {
+        IfxBtSetTransportState(FdoExtension,
+                               IfxBtTransportStateUartOpened,
+                               Status);
         DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN FdoOpenDevice exit ioTarget=%p status=%!STATUS!", *_pIoTarget, Status));
     }
 
@@ -1172,10 +1341,18 @@ Return Value:
 {
     NTSTATUS       Status;
     PFDO_EXTENSION FdoExtension;
+    IFXBT_FAILURE_REASON FailureReason;
 
     PAGED_CODE();
 
     DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevPrepareHardware entry device=%p", _Device));
+
+    FdoExtension = FdoGetExtension(_Device);
+    FdoExtension->LastFailureReason = IfxBtFailureNone;
+    FdoExtension->LastFailureStatus = STATUS_SUCCESS;
+    IfxBtSetTransportState(FdoExtension,
+                           IfxBtTransportStateCreated,
+                           STATUS_SUCCESS);
 
     //
     // Acquire connection ID of connected controllers (UART and GPIO)
@@ -1190,8 +1367,6 @@ Return Value:
         DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children skipped because parent transport is not ready status=%!STATUS!", Status));
         goto Exit;
     }
-
-    FdoExtension = FdoGetExtension(_Device);
 
     //
     // Open Bluetooth UART device as a remote IO Target
@@ -1258,6 +1433,13 @@ Return Value:
     {
         // Can have issue if this UART device cannot be initalized
         Status = STATUS_DEVICE_NOT_READY;
+        FailureReason = FdoExtension->LastFailureReason;
+        if (FailureReason == IfxBtFailureNone) {
+            FailureReason = IfxBtFailureUartConfigFailed;
+        }
+        IfxBtSetFailureReason(FdoExtension,
+                              FailureReason,
+                              Status);
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevPrepareHardware DeviceInitialize failed status=%!STATUS!", Status));
         DoTrace(LEVEL_ERROR, TFLAG_PNP, ("FDO create_children skipped because parent transport initialization failed status=%!STATUS!", Status));
 
@@ -1494,6 +1676,9 @@ Return Value:
 {
     PFDO_EXTENSION FdoExtension = FdoGetExtension(_Device);
     NTSTATUS       Status = STATUS_SUCCESS;
+#ifdef REQUIRE_REINITIALIZE
+    IFXBT_FAILURE_REASON FailureReason;
+#endif
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Entry entry device=%p previousState=%d initialized=%d",
             _Device, _PreviousState, IsDeviceInitialized(FdoExtension)));
@@ -1536,6 +1721,13 @@ Return Value:
                                                          FALSE);
         if (!IsDeviceInitialized(FdoExtension)) {
             Status = STATUS_DEVICE_NOT_READY;
+            FailureReason = FdoExtension->LastFailureReason;
+            if (FailureReason == IfxBtFailureNone) {
+                FailureReason = IfxBtFailureUartConfigFailed;
+            }
+            IfxBtSetFailureReason(FdoExtension,
+                                  FailureReason,
+                                  Status);
             DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevD0Entry DeviceInitialize failed status=%!STATUS!", Status));
             goto Done;
         }
@@ -2289,11 +2481,21 @@ Return Value:
                         //
                         // 2. Create a PDO for the Bluetooth devnode;
                         //
-                        Status = FdoCreateOneChildDevice(Device,
-                                                         BT_PDO_HARDWARE_IDS,
-                                                         BLUETOOTH_FUNC_IDS);
-                        if (NT_SUCCESS(Status)) {
-                            FdoExtension->IsRadioEnabled = TRUE;
+                        if (!IfxBtIsParentTransportReady(FdoExtension)) {
+                            Status = FdoExtension->LastFailureStatus;
+                            if (Status == STATUS_SUCCESS) {
+                                Status = STATUS_DEVICE_NOT_READY;
+                            }
+                            DoTrace(LEVEL_ERROR, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff create_child blocked parent transport not ready status=%!STATUS!",
+                                    Status));
+                        }
+                        else {
+                            Status = FdoCreateOneChildDevice(Device,
+                                                             BT_PDO_HARDWARE_IDS,
+                                                             BLUETOOTH_FUNC_IDS);
+                            if (NT_SUCCESS(Status)) {
+                                FdoExtension->IsRadioEnabled = TRUE;
+                            }
                         }
                     }
                     DoTrace(LEVEL_INFO, TFLAG_IOCTL,("BTHX_IOCTL radio_onoff enable status=%!STATUS!", Status));

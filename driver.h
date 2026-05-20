@@ -155,6 +155,40 @@ typedef struct _PDO_IDENTIFICATION_DESCRIPTION
 
 typedef struct _UART_READ_CONTEXT *PUART_READ_CONTEXT;
 
+typedef enum _IFXBT_TRANSPORT_STATE {
+    IfxBtTransportStateCreated = 0,
+    IfxBtTransportStateResourcesParsed,
+    IfxBtTransportStateUartOpened,
+    IfxBtTransportStateUartConfigured,
+    IfxBtTransportStatePlatformPowered,
+    IfxBtTransportStateFirmwareReady,
+    IfxBtTransportStateBaudSynchronized,
+    IfxBtTransportStateOperational,
+    IfxBtTransportStateStopping,
+    IfxBtTransportStateRecovering,
+    IfxBtTransportStateFailed
+} IFXBT_TRANSPORT_STATE;
+
+typedef enum _IFXBT_FAILURE_REASON {
+    IfxBtFailureNone = 0,
+    IfxBtFailureMissingUartResource,
+    IfxBtFailureUartOpenFailed,
+    IfxBtFailureUartConfigPlaceholder,
+    IfxBtFailureUartConfigFailed,
+    IfxBtFailurePowerResourcesPlaceholder,
+    IfxBtFailurePowerSequenceFailed,
+    IfxBtFailureFirmwareSequencePlaceholder,
+    IfxBtFailureFirmwareDownloadFailed,
+    IfxBtFailureVendorCommandFailed,
+    IfxBtFailureFirmwareResponseTimeout,
+    IfxBtFailureBaudSwitchFailed,
+    IfxBtFailureControllerValidationFailed,
+    IfxBtFailureH4Desync,
+    IfxBtFailureSerialError,
+    IfxBtFailureReadPumpFailed,
+    IfxBtFailureRecoveryFailed
+} IFXBT_FAILURE_REASON;
+
 //
 // Bus driver's FDO (Function Device Object) extension structure used to maintain device
 // properties and state.
@@ -194,6 +228,13 @@ typedef struct _FDO_EXTENSION
     // when tranistion from exiting D0 to resume D0.
     //
     BOOLEAN DeviceInitialized;
+
+    //
+    // Parent transport readiness contract state and last failure.
+    //
+    IFXBT_TRANSPORT_STATE TransportState;
+    IFXBT_FAILURE_REASON LastFailureReason;
+    NTSTATUS LastFailureStatus;
 
     //
     // Cached UART controller connection IDs

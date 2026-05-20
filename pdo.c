@@ -434,6 +434,7 @@ Return Value:
 {
     PPDO_EXTENSION  PdoExtension = (PPDO_EXTENSION) _InterfaceContext;
     WDFDEVICE       Fdo = PdoExtension->FdoExtension->WdfDevice;
+    NTSTATUS        Status;
 
     PAGED_CODE();
 
@@ -455,8 +456,17 @@ Return Value:
     // ourselves.
     //
 
-    FdoRemoveOneChildDevice(Fdo, BLUETOOTH_FUNC_IDS);
-    FdoCreateOneChildDevice(Fdo, BT_PDO_HARDWARE_IDS, BLUETOOTH_FUNC_IDS);
+    Status = FdoRemoveOneChildDevice(Fdo, BLUETOOTH_FUNC_IDS);
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PDO reset PdoResetHandler remove child failed status=%!STATUS!", Status));
+        return Status;
+    }
+
+    Status = FdoCreateOneChildDevice(Fdo, BT_PDO_HARDWARE_IDS, BLUETOOTH_FUNC_IDS);
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PDO reset PdoResetHandler recreate child blocked or failed status=%!STATUS!", Status));
+        return Status;
+    }
 
     DoTrace(LEVEL_INFO, TFLAG_PNP, ("PDO reset PdoResetHandler exit status=%!STATUS!", STATUS_SUCCESS));
 

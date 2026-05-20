@@ -277,6 +277,10 @@ Return Value:
     if (_FdoExtension == NULL || _IoTargetSerial == NULL || _RequestSync == NULL)
     {
         Initialized = FALSE;
+        if (_FdoExtension != NULL) {
+            _FdoExtension->LastFailureReason = IfxBtFailureUartConfigFailed;
+            _FdoExtension->LastFailureStatus = STATUS_INVALID_PARAMETER;
+        }
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize missing required context fdoExtension=%p ioTarget=%p request=%p",
                 _FdoExtension, _IoTargetSerial, _RequestSync));
         goto Exit;
@@ -298,6 +302,8 @@ Return Value:
     if (!NT_SUCCESS(FirmwareStatus))
     {
         Initialized = FALSE;
+        _FdoExtension->LastFailureReason = IfxBtFailureFirmwareSequencePlaceholder;
+        _FdoExtension->LastFailureStatus = FirmwareStatus;
         DoTrace(LEVEL_ERROR, TFLAG_HCI, ("DEVICE_STUB DeviceInitialize firmware placeholder validation failed status=%!STATUS!",
                 FirmwareStatus));
         goto Exit;
@@ -311,6 +317,15 @@ Return Value:
     if (!NT_SUCCESS(UartStatus))
     {
         Initialized = FALSE;
+        if (PlatformConfig->PlaceholderPlatformValue ||
+            PlatformConfig->InitialUartBaudPlaceholder == 0 ||
+            PlatformConfig->UartFlowControlPlaceholder == IfxBtPlatformUartFlowControlPlaceholderUnknown) {
+            _FdoExtension->LastFailureReason = IfxBtFailureUartConfigPlaceholder;
+        }
+        else {
+            _FdoExtension->LastFailureReason = IfxBtFailureUartConfigFailed;
+        }
+        _FdoExtension->LastFailureStatus = UartStatus;
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize UART configuration pending or failed status=%!STATUS!",
                 UartStatus));
         goto Exit;
