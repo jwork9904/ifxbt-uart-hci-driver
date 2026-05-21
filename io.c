@@ -696,6 +696,7 @@ Return Value:
     PH4_PACKET H4Packet;
     ULONG PacketLen;
     ULONG BytesToRead;
+    ULONG BytesConsumed;
 
     DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ ReadH4PacketReassemble entry bytesRead=%d readSegmentState=%d",
         _BytesRead, _ReadContext->ReadSegmentState));
@@ -821,20 +822,45 @@ Return Value:
                     DoTrace(LEVEL_INFO, TFLAG_IO, (" [AclData] Header[3] 0x%x", _ReadContext->H4Packet.Packet.Raw[_ReadContext->BytesReadNextSegment]));
                     BUFFER_AND_SIZE_ADJUSTED(Buffer, BytesRemained, _ReadContext->BytesReadNextSegment, 1);
 
-                    // Read the reamainder of a full (Data) packet
-                    if (BytesRemained < _ReadContext->H4Packet.Packet.AclData.DataLength) {
-                        _ReadContext->BytesToRead4FullPacket =
-                            _ReadContext->H4Packet.Packet.AclData.DataLength - BytesRemained;
+                    if (_ReadContext->H4Packet.Packet.AclData.DataLength == 0) {
+                        // Full packet: try match to a Request in queue (if any) and complete it.
+                        PacketLen = HCI_ACLDATA_HEADER_LEN;
+                        DoTrace(LEVEL_INFO, TFLAG_HCI, ("RX_PARSE zero_length_acl_complete h4Type=%d hciLen=%d",
+                                _ReadContext->H4Packet.Type,
+                                PacketLen));
+                        Status = ReadH4PacketComplete(FdoExtension,
+                                                      _ReadContext->H4Packet.Type,
+                                                      (PUCHAR) &_ReadContext->H4Packet.Packet.AclData,
+                                                      PacketLen);
+                        // Next packet
+                        ReadSegmentStateSet(_ReadContext, GET_PKT_TYPE);
                     }
+                    else {
+                        // Read the reamainder of a full (Data) packet
+                        if (BytesRemained < _ReadContext->H4Packet.Packet.AclData.DataLength) {
+                            _ReadContext->BytesToRead4FullPacket =
+                                _ReadContext->H4Packet.Packet.AclData.DataLength - BytesRemained;
+                        }
 
-                    // Process to read packet payload
-                    ReadSegmentStateSet(_ReadContext, GET_PKT_PAYLOAD);
+                        // Process to read packet payload
+                        ReadSegmentStateSet(_ReadContext, GET_PKT_PAYLOAD);
+                    }
                 }
             }
             break;
 
         case GET_PKT_PAYLOAD:
             if (_ReadContext->H4Packet.Type == (UCHAR) HciPacketEvent) {
+
+                if (_ReadContext->BytesReadNextSegment > _ReadContext->H4Packet.Packet.Event.ParamsCount) {
+                    Status = STATUS_INVALID_PARAMETER;
+                    DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_length h4Type=%d bytesReadPayload=%d eventPayloadLen=%d status=%!STATUS!",
+                            _ReadContext->H4Packet.Type,
+                            _ReadContext->BytesReadNextSegment,
+                            _ReadContext->H4Packet.Packet.Event.ParamsCount,
+                            Status));
+                    goto OutOfSync;
+                }
 
                 BytesToRead = _ReadContext->H4Packet.Packet.Event.ParamsCount - _ReadContext->BytesReadNextSegment;
 
@@ -859,15 +885,16 @@ Return Value:
                 }
                 else {
                     // Partial packet
+                    BytesConsumed = BytesRemained;
                     RtlCopyMemory(&_ReadContext->H4Packet.Packet.Event.Params[_ReadContext->BytesReadNextSegment],
                                   Buffer,
-                                  BytesRemained);
-                    DoTrace(LEVEL_INFO, TFLAG_IO, (" [Event] Payload[%d + %d] = Partial; %d to read",
+                                  BytesConsumed);
+                    DoTrace(LEVEL_INFO, TFLAG_HCI, ("RX_PARSE partial_payload_progress h4Type=%d payloadOffset=%d bytesCopied=%d bytesRemaining=%d",
+                            _ReadContext->H4Packet.Type,
                             _ReadContext->BytesReadNextSegment,
-                            BytesRemained,
-                            BytesToRead - BytesRemained));
-                    _ReadContext->BytesReadNextSegment += BytesRemained;
-                    BUFFER_AND_SIZE_ADJUSTED(Buffer, BytesRemained, _ReadContext->BytesReadNextSegment, BytesRemained);
+                            BytesConsumed,
+                            BytesToRead - BytesConsumed));
+                    BUFFER_AND_SIZE_ADJUSTED(Buffer, BytesRemained, _ReadContext->BytesReadNextSegment, BytesConsumed);
 
                     // Remaining event params to read
                     _ReadContext->BytesToRead4FullPacket =
@@ -887,6 +914,16 @@ Return Value:
                             HCI_MAX_ACL_PAYLOAD_SIZE,
                             Status));
                     NT_ASSERT(FALSE && L"Max ACL DataLength exceeded the presetted Max");
+                    goto OutOfSync;
+                }
+
+                if (_ReadContext->BytesReadNextSegment > _ReadContext->H4Packet.Packet.AclData.DataLength) {
+                    Status = STATUS_INVALID_PARAMETER;
+                    DoTrace(LEVEL_ERROR, TFLAG_HCI, ("RX_PARSE_ERROR invalid_length h4Type=%d bytesReadPayload=%d aclPayloadLen=%d status=%!STATUS!",
+                            _ReadContext->H4Packet.Type,
+                            _ReadContext->BytesReadNextSegment,
+                            _ReadContext->H4Packet.Packet.AclData.DataLength,
+                            Status));
                     goto OutOfSync;
                 }
 
@@ -913,15 +950,16 @@ Return Value:
                 }
                 else {
                     // Process partial packet
+                    BytesConsumed = BytesRemained;
                     RtlCopyMemory(&_ReadContext->H4Packet.Packet.AclData.Data[_ReadContext->BytesReadNextSegment],
                                   Buffer,
-                                  BytesRemained);
-                    DoTrace(LEVEL_INFO, TFLAG_IO, (" [AclData] Payload[%d + %d] = Partial; %d to read",
+                                  BytesConsumed);
+                    DoTrace(LEVEL_INFO, TFLAG_HCI, ("RX_PARSE partial_payload_progress h4Type=%d payloadOffset=%d bytesCopied=%d bytesRemaining=%d",
+                            _ReadContext->H4Packet.Type,
                             _ReadContext->BytesReadNextSegment,
-                            BytesRemained,
-                            BytesToRead - BytesRemained));
-                    _ReadContext->BytesReadNextSegment += BytesRemained;
-                    BUFFER_AND_SIZE_ADJUSTED(Buffer, BytesRemained, _ReadContext->BytesReadNextSegment, BytesRemained);
+                            BytesConsumed,
+                            BytesToRead - BytesConsumed));
+                    BUFFER_AND_SIZE_ADJUSTED(Buffer, BytesRemained, _ReadContext->BytesReadNextSegment, BytesConsumed);
 
                     // Remaining data to read
                     _ReadContext->BytesToRead4FullPacket =
