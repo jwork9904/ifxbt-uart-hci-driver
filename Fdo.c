@@ -1968,7 +1968,7 @@ Return Value:
 {
     WDF_OBJECT_ATTRIBUTES ObjAttributes;
     NTSTATUS Status;
-    WDFREQUEST RequestToUART;
+    WDFREQUEST RequestToUART = NULL;
     PUART_WRITE_CONTEXT   TransferContext = NULL;
     ULONG  DataLength;
     PVOID   Data = NULL;
@@ -2057,7 +2057,26 @@ Return Value:
     // Cannot mark the request that we will forward to lower driver cancellable.
     // Only if the Request from upper layer is cancelled, we will then cancel the
     // Request that is sent to lower driver.
-    WdfRequestMarkCancelable(_RequestFromBthport, CB_RequestFromBthportCancel);
+    Status = WdfRequestMarkCancelableEx(_RequestFromBthport, CB_RequestFromBthportCancel);
+    DoTrace(LEVEL_INFO, TFLAG_IO, ("TX_CANCEL mark_cancelable_ex status=%!STATUS!", Status));
+    if (!NT_SUCCESS(Status))
+    {
+        if (Status == STATUS_CANCELLED)
+        {
+            DoTrace(LEVEL_WARNING, TFLAG_IO, ("TX_CANCEL upper request already canceled before lower send"));
+        }
+        else
+        {
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO WdfRequestMarkCancelableEx failed status=%!STATUS!", Status));
+        }
+
+        // The upper request was not marked cancelable, and the lower request was
+        // not sent.  Balance the references taken for the normal send path; the
+        // common failure cleanup below deletes the lower request and memory object.
+        WdfObjectDereference(RequestToUART);
+        WdfObjectDereference(_RequestFromBthport);
+        goto Done;
+    }
 
     WdfRequestSetCompletionRoutine(RequestToUART, CR_WriteDeviceIO, TransferContext);
 
@@ -2077,6 +2096,19 @@ Return Value:
         // Balance the reference count for both Requests due to failure.
         WdfObjectDereference(RequestToUART);
         WdfObjectDereference(_RequestFromBthport);
+
+        if (StatusTemp == STATUS_CANCELLED)
+        {
+            DoTrace(LEVEL_WARNING, TFLAG_IO, ("TX_CANCEL send_failed_unmark_cancelled cancel owns completion"));
+
+            // The upper request cancel callback has been invoked or is about to
+            // be invoked.  Return STATUS_PENDING so FdoIoQuDeviceControl does
+            // not complete the upper request a second time.
+            Status = STATUS_PENDING;
+            goto Done;
+        }
+
+        DoTrace(LEVEL_INFO, TFLAG_IO, ("TX_CANCEL send_failed_unmark_ok caller owns completion"));
 
         DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_WRITE FdoWriteDeviceIO WdfRequestSend failed status=%!STATUS! unmarkStatus=%!STATUS!", Status, StatusTemp));
         goto Done;
