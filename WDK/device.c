@@ -172,6 +172,160 @@ Return Value:
 
 static
 NTSTATUS
+IfxBtSendUartConfigIoctl(
+    _In_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_UART_CONFIG_STAGE Stage,
+    _In_ ULONG IoControlCode,
+    _In_ ULONG InBufferSize,
+    _In_reads_bytes_(InBufferSize) PVOID InBuffer
+    )
+{
+    NTSTATUS Status;
+    ULONG_PTR BytesWritten = 0;
+
+    Status = FdoWriteToDeviceSync(FdoExtension->IoTargetSerial,
+                                  FdoExtension->RequestIoctlSync,
+                                  IoControlCode,
+                                  InBufferSize,
+                                  InBuffer,
+                                  &BytesWritten);
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG serial_ioctl stage=%d code=0x%x bytes=%d status=%!STATUS!",
+                Stage, IoControlCode, (ULONG)BytesWritten, Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONFIG serial_ioctl stage=%d code=0x%x bytes=%d status=%!STATUS!",
+                Stage, IoControlCode, (ULONG)BytesWritten, Status));
+    }
+
+    return Status;
+}
+
+static
+VOID
+IfxBtLogUartConfigStage(
+    _In_ IFXBT_UART_CONFIG_STAGE Stage,
+    _In_ NTSTATUS Status
+    )
+{
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG stage=%d status=%!STATUS!",
+                Stage, Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONFIG stage=%d status=%!STATUS!",
+                Stage, Status));
+    }
+}
+
+static
+VOID
+IfxBtSetUartConfigFailure(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_FAILURE_REASON FailureReason,
+    _In_ NTSTATUS Status
+    )
+{
+    if (FdoExtension == NULL) {
+        return;
+    }
+
+    FdoExtension->LastFailureReason = FailureReason;
+    FdoExtension->LastFailureStatus = Status;
+
+    DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG failure reason=%d status=%!STATUS!",
+            FailureReason, Status));
+}
+
+static
+VOID
+IfxBtRollbackPartialUartConfig(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_UART_CONFIG_STAGE FailedStage,
+    _In_ NTSTATUS FailureStatus
+    )
+{
+    if (FdoExtension != NULL) {
+        FdoExtension->DeviceInitialized = FALSE;
+    }
+
+    //
+    // Future rollback policy: once real board values are active, a failure after
+    // any serial-setting stage must leave the parent transport closed to child
+    // exposure. If a later phase captures previous serial state, restore it here;
+    // otherwise the failed PrepareHardware/D0 path will tear down the target.
+    //
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG partial_config_rollback_hook stage=%d status=%!STATUS!",
+            FailedStage, FailureStatus));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG partial_config_fail_closed=1"));
+}
+
+static
+VOID
+IfxBtConvertUartTimeoutsConfig(
+    _In_ const IFXBT_PLATFORM_UART_TIMEOUTS_CONFIG* PlatformTimeouts,
+    _Out_ SERIAL_TIMEOUTS* SerialTimeouts
+    )
+{
+    RtlZeroMemory(SerialTimeouts, sizeof(*SerialTimeouts));
+
+    SerialTimeouts->ReadIntervalTimeout =
+        PlatformTimeouts->ReadIntervalTimeout;
+    SerialTimeouts->ReadTotalTimeoutMultiplier =
+        PlatformTimeouts->ReadTotalTimeoutMultiplier;
+    SerialTimeouts->ReadTotalTimeoutConstant =
+        PlatformTimeouts->ReadTotalTimeoutConstant;
+    SerialTimeouts->WriteTotalTimeoutMultiplier =
+        PlatformTimeouts->WriteTotalTimeoutMultiplier;
+    SerialTimeouts->WriteTotalTimeoutConstant =
+        PlatformTimeouts->WriteTotalTimeoutConstant;
+}
+
+static
+VOID
+IfxBtConvertUartHandflowConfig(
+    _In_ const IFXBT_PLATFORM_UART_HANDFLOW_CONFIG* PlatformHandflow,
+    _Out_ SERIAL_HANDFLOW* SerialHandflow
+    )
+{
+    RtlZeroMemory(SerialHandflow, sizeof(*SerialHandflow));
+
+    SerialHandflow->ControlHandShake = PlatformHandflow->ControlHandShake;
+    SerialHandflow->FlowReplace = PlatformHandflow->FlowReplace;
+    SerialHandflow->XonLimit = PlatformHandflow->XonLimit;
+    SerialHandflow->XoffLimit = PlatformHandflow->XoffLimit;
+}
+
+static
+ULONG
+IfxBtConvertUartPurgeMask(
+    _In_ ULONG PlatformPurgeMask
+    )
+{
+    ULONG SerialPurgeMask = 0;
+
+    if ((PlatformPurgeMask & IfxBtPlatformUartPurgeTxAbort) != 0) {
+        SerialPurgeMask |= SERIAL_PURGE_TXABORT;
+    }
+
+    if ((PlatformPurgeMask & IfxBtPlatformUartPurgeRxAbort) != 0) {
+        SerialPurgeMask |= SERIAL_PURGE_RXABORT;
+    }
+
+    if ((PlatformPurgeMask & IfxBtPlatformUartPurgeTxClear) != 0) {
+        SerialPurgeMask |= SERIAL_PURGE_TXCLEAR;
+    }
+
+    if ((PlatformPurgeMask & IfxBtPlatformUartPurgeRxClear) != 0) {
+        SerialPurgeMask |= SERIAL_PURGE_RXCLEAR;
+    }
+
+    return SerialPurgeMask;
+}
+
+static
+NTSTATUS
 IfxBtConfigureUart(
     _In_ PFDO_EXTENSION FdoExtension,
     _In_ const IFXBT_PLATFORM_CONFIG* PlatformConfig,
@@ -179,15 +333,30 @@ IfxBtConfigureUart(
     )
 {
     NTSTATUS Status = STATUS_DEVICE_NOT_READY;
+    IFXBT_UART_CONFIG_STAGE Stage = IfxBtUartConfigStageNotStarted;
+    const IFXBT_PLATFORM_UART_CONFIG* UartConfig;
+    BOOLEAN PartialConfigApplied = FALSE;
+    SERIAL_BAUD_RATE BaudRate;
+    SERIAL_LINE_CONTROL LineControl;
+    SERIAL_TIMEOUTS Timeouts;
+    SERIAL_HANDFLOW Handflow;
+    ULONG PurgeMask;
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONFIG IfxBtConfigureUart entry fdoExtension=%p platformConfig=%p isUartReset=%d",
             FdoExtension, PlatformConfig, IsUartReset));
+
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+
+    Stage = IfxBtUartConfigStageValidateTarget;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
 
     if (FdoExtension == NULL || PlatformConfig == NULL)
     {
         Status = STATUS_INVALID_PARAMETER;
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG missing required context fdoExtension=%p platformConfig=%p status=%!STATUS!",
                 FdoExtension, PlatformConfig, Status));
+        Stage = IfxBtUartConfigStageFailed;
+        IfxBtLogUartConfigStage(Stage, Status);
         goto Exit;
     }
 
@@ -196,33 +365,152 @@ IfxBtConfigureUart(
         Status = STATUS_DEVICE_NOT_READY;
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG missing UART target or sync request ioTarget=%p request=%p status=%!STATUS!",
                 FdoExtension->IoTargetSerial, FdoExtension->RequestIoctlSync, Status));
+        IfxBtSetUartConfigFailure(FdoExtension,
+                                  IfxBtFailureUartConfigFailed,
+                                  Status);
+        Stage = IfxBtUartConfigStageFailed;
+        IfxBtLogUartConfigStage(Stage, Status);
         goto Exit;
     }
 
-    if (PlatformConfig->PlaceholderPlatformValue ||
-        PlatformConfig->InitialUartBaudPlaceholder == 0 ||
-        PlatformConfig->UartFlowControlPlaceholder == IfxBtPlatformUartFlowControlPlaceholderUnknown)
-    {
-        Status = STATUS_DEVICE_NOT_READY;
-        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG placeholder config active placeholder=%d status=%!STATUS!",
-                PlatformConfig->PlaceholderPlatformValue, Status));
-        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG uart baud unknown value=%lu real platform baud pending",
-                PlatformConfig->InitialUartBaudPlaceholder));
-        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG uart flow control unknown value=%d real platform flow control pending",
-                PlatformConfig->UartFlowControlPlaceholder));
-        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG line control pending real platform data"));
-        DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG no serial IOCTLs issued"));
+    Stage = IfxBtUartConfigStageValidatePlatformConfig;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+
+    UartConfig = IfxBtPlatformGetUartConfig();
+    IfxBtPlatformLogUartConfig(UartConfig);
+
+    Status = IfxBtPlatformValidateUartConfig(UartConfig);
+    if (!NT_SUCCESS(Status)) {
+        if (Status == STATUS_DEVICE_NOT_READY &&
+            UartConfig != NULL &&
+            UartConfig->PlaceholderUartConfig) {
+            IfxBtSetUartConfigFailure(FdoExtension,
+                                      IfxBtFailureUartConfigPlaceholder,
+                                      Status);
+            DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG no_serial_ioctls_issued_placeholder=1"));
+            DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG placeholder_blocking_initialization status=%!STATUS!",
+                    Status));
+            DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG future_real_path_not_executed_placeholder=1"));
+        }
+        else {
+            IfxBtSetUartConfigFailure(FdoExtension,
+                                      IfxBtFailureUartConfigFailed,
+                                      Status);
+        }
+        Stage = IfxBtUartConfigStageFailed;
+        IfxBtLogUartConfigStage(Stage, Status);
         goto Exit;
     }
 
     //
-    // Real UART programming is intentionally deferred until platform baud,
-    // line-control, and flow-control values are provided.
+    // Real-value execution order:
+    // 1. Program the initial baud for host/controller synchronization.
+    // 2. Program line control from platform-provided data bits/parity/stop bits.
+    // 3. Convert neutral platform handflow config to SERIAL_HANDFLOW locally,
+    //    then program handflow.
+    // 4. Convert neutral platform timeout config to SERIAL_TIMEOUTS locally,
+    //    then program timeouts.
+    // 5. Purge only when the platform purge mask explicitly requires it.
     //
-    Status = STATUS_NOT_IMPLEMENTED;
-    DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONFIG real UART values present but IOCTL programming is not implemented status=%!STATUS!",
-            Status));
-    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONFIG no serial IOCTLs issued"));
+    // The WDK serial structs stay in this UART application layer so the shared
+    // platform contract header does not include ntddser.h.
+    //
+    // OperationalBaud is intentionally logged and validated here, but the actual
+    // baud switch belongs to the later firmware/vendor baud-synchronization
+    // phase. This function does not send HCI Reset or vendor commands.
+    //
+    Stage = IfxBtUartConfigStageApplyBaudRate;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+    RtlZeroMemory(&BaudRate, sizeof(BaudRate));
+    BaudRate.BaudRate = UartConfig->InitialBaud;
+    Status = IfxBtSendUartConfigIoctl(FdoExtension,
+                                      Stage,
+                                      IOCTL_SERIAL_SET_BAUD_RATE,
+                                      (ULONG)sizeof(BaudRate),
+                                      &BaudRate);
+    if (!NT_SUCCESS(Status)) {
+        goto ApplyFailed;
+    }
+    PartialConfigApplied = TRUE;
+
+    Stage = IfxBtUartConfigStageApplyLineControl;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+    RtlZeroMemory(&LineControl, sizeof(LineControl));
+    LineControl.WordLength = UartConfig->DataBits;
+    LineControl.Parity = UartConfig->Parity;
+    LineControl.StopBits = UartConfig->StopBits;
+    Status = IfxBtSendUartConfigIoctl(FdoExtension,
+                                      Stage,
+                                      IOCTL_SERIAL_SET_LINE_CONTROL,
+                                      (ULONG)sizeof(LineControl),
+                                      &LineControl);
+    if (!NT_SUCCESS(Status)) {
+        goto ApplyFailed;
+    }
+
+    Stage = IfxBtUartConfigStageApplyFlowControl;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+    IfxBtConvertUartHandflowConfig(&UartConfig->Handflow,
+                                   &Handflow);
+    Status = IfxBtSendUartConfigIoctl(FdoExtension,
+                                      Stage,
+                                      IOCTL_SERIAL_SET_HANDFLOW,
+                                      (ULONG)sizeof(Handflow),
+                                      &Handflow);
+    if (!NT_SUCCESS(Status)) {
+        goto ApplyFailed;
+    }
+
+    Stage = IfxBtUartConfigStageApplyTimeouts;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+    IfxBtConvertUartTimeoutsConfig(&UartConfig->Timeouts,
+                                   &Timeouts);
+    Status = IfxBtSendUartConfigIoctl(FdoExtension,
+                                      Stage,
+                                      IOCTL_SERIAL_SET_TIMEOUTS,
+                                      (ULONG)sizeof(Timeouts),
+                                      &Timeouts);
+    if (!NT_SUCCESS(Status)) {
+        goto ApplyFailed;
+    }
+
+    Stage = IfxBtUartConfigStagePurge;
+    IfxBtLogUartConfigStage(Stage, STATUS_SUCCESS);
+    PurgeMask = IfxBtConvertUartPurgeMask(UartConfig->PurgeMask);
+    if (PurgeMask != 0) {
+        Status = IfxBtSendUartConfigIoctl(FdoExtension,
+                                          Stage,
+                                          IOCTL_SERIAL_PURGE,
+                                          (ULONG)sizeof(PurgeMask),
+                                          &PurgeMask);
+        if (!NT_SUCCESS(Status)) {
+            goto ApplyFailed;
+        }
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONFIG purge_not_required stage=%d status=%!STATUS!",
+                Stage, STATUS_SUCCESS));
+    }
+
+    Stage = IfxBtUartConfigStageComplete;
+    Status = STATUS_SUCCESS;
+    IfxBtLogUartConfigStage(Stage, Status);
+    goto Exit;
+
+ApplyFailed:
+
+    IfxBtSetUartConfigFailure(FdoExtension,
+                              IfxBtFailureUartConfigFailed,
+                              Status);
+
+    if (PartialConfigApplied) {
+        IfxBtRollbackPartialUartConfig(FdoExtension,
+                                       Stage,
+                                       Status);
+    }
+
+    Stage = IfxBtUartConfigStageFailed;
+    IfxBtLogUartConfigStage(Stage, Status);
 
 Exit:
 
@@ -267,6 +555,7 @@ Return Value:
 {
     BOOLEAN Initialized = TRUE;
     const IFXBT_PLATFORM_CONFIG* PlatformConfig;
+    const IFXBT_PLATFORM_UART_CONFIG* UartConfig;
     NTSTATUS PlatformStatus;
     NTSTATUS FirmwareStatus;
     NTSTATUS UartStatus;
@@ -297,6 +586,7 @@ Return Value:
     }
 
     IfxBtPlatformLogConfig(PlatformConfig);
+    UartConfig = IfxBtPlatformGetUartConfig();
 
     FirmwareStatus = IfxBtFirmwareValidatePlaceholderState(PlatformConfig);
     if (!NT_SUCCESS(FirmwareStatus))
@@ -317,9 +607,9 @@ Return Value:
     if (!NT_SUCCESS(UartStatus))
     {
         Initialized = FALSE;
-        if (PlatformConfig->PlaceholderPlatformValue ||
-            PlatformConfig->InitialUartBaudPlaceholder == 0 ||
-            PlatformConfig->UartFlowControlPlaceholder == IfxBtPlatformUartFlowControlPlaceholderUnknown) {
+        if (UartConfig != NULL &&
+            UartConfig->PlaceholderUartConfig &&
+            UartStatus == STATUS_DEVICE_NOT_READY) {
             _FdoExtension->LastFailureReason = IfxBtFailureUartConfigPlaceholder;
         }
         else {

@@ -59,10 +59,18 @@ Environment:
     L"ACPI\\QCOM0E16\\7"
 
 //
-// TODO_REAL_UART_BAUD PLACEHOLDER_PLATFORM_VALUE:
-// Zero means unknown/not configured in this phase.
+// UART contract placeholders. These values are intentionally not usable for
+// serial programming; PlaceholderUartConfig blocks all IOCTL_SERIAL_* calls.
 //
-#define IFXBT_PLATFORM_INITIAL_UART_BAUD_PLACEHOLDER 0UL
+#define TODO_REAL_UART_INITIAL_BAUD 0UL
+#define TODO_REAL_UART_OPERATIONAL_BAUD 0UL
+#define TODO_REAL_UART_DATA_BITS ((UCHAR)0)
+#define TODO_REAL_UART_PARITY ((UCHAR)0xff)
+#define TODO_REAL_UART_STOP_BITS ((UCHAR)0xff)
+#define TODO_REAL_UART_FLOW_CONTROL IfxBtPlatformUartFlowControlPlaceholderUnknown
+#define TODO_REAL_UART_TIMEOUTS { 0UL, 0UL, 0UL, 0UL, 0UL }
+#define TODO_REAL_UART_PURGE_POLICY 0UL
+#define TODO_REAL_UART_BAUD_SWITCH_REQUIRED FALSE
 
 //
 // TODO_REAL_GPIO_RESOURCES PLACEHOLDER_PLATFORM_VALUE:
@@ -78,6 +86,23 @@ Environment:
 #define IFXBT_PLATFORM_GPIO_DEV_WAKE_PLACEHOLDER \
     L"TODO_REAL_GPIO_RESOURCES:DEV_WAKE"
 
+static const IFXBT_PLATFORM_UART_CONFIG IfxBtPlatformUartConfig = {
+    (ULONG)sizeof(IFXBT_PLATFORM_UART_CONFIG),
+    TODO_REAL_UART_INITIAL_BAUD,
+    TODO_REAL_UART_OPERATIONAL_BAUD,
+    TODO_REAL_UART_DATA_BITS,
+    TODO_REAL_UART_STOP_BITS,
+    TODO_REAL_UART_PARITY,
+    TODO_REAL_UART_FLOW_CONTROL,
+    TODO_REAL_UART_BAUD_SWITCH_REQUIRED,
+    TRUE,  // TODO_REAL_UART_TIMEOUTS PLACEHOLDER_PLATFORM_VALUE
+    TRUE,  // TODO_REAL_UART_PURGE_POLICY PLACEHOLDER_PLATFORM_VALUE
+    TODO_REAL_UART_TIMEOUTS,
+    { 0UL, 0UL, 0, 0 }, // TODO_REAL_UART_FLOW_CONTROL handflow policy pending
+    TODO_REAL_UART_PURGE_POLICY,
+    TRUE
+};
+
 static const IFXBT_PLATFORM_CONFIG IfxBtPlatformConfig = {
     (ULONG)sizeof(IFXBT_PLATFORM_CONFIG),
     IFXBT_PLATFORM_NAME,
@@ -87,8 +112,6 @@ static const IFXBT_PLATFORM_CONFIG IfxBtPlatformConfig = {
     IFXBT_PLATFORM_BT_CLIENT_ACPI_CRS_PLACEHOLDER,
     IFXBT_PLATFORM_KNOWN_LOWER_UART_CONTROLLER_HID,
     IFXBT_PLATFORM_KNOWN_LOWER_UART_CONTROLLER_INSTANCE_HINT,
-    IFXBT_PLATFORM_INITIAL_UART_BAUD_PLACEHOLDER,
-    IfxBtPlatformUartFlowControlPlaceholderUnknown, // TODO_REAL_UART_FLOW_CONTROL PLACEHOLDER_PLATFORM_VALUE
     IFXBT_PLATFORM_GPIO_BT_RESET_PLACEHOLDER,
     IFXBT_PLATFORM_GPIO_BT_REG_ON_PLACEHOLDER,
     IFXBT_PLATFORM_GPIO_HOST_WAKE_PLACEHOLDER,
@@ -106,10 +129,20 @@ IfxBtPlatformLogAcpiContract(
     _In_ const IFXBT_PLATFORM_CONFIG* Config
     );
 
+static
+VOID
+IfxBtPlatformLogMissingUartPlaceholders(VOID);
+
 const IFXBT_PLATFORM_CONFIG*
 IfxBtPlatformGetConfig(VOID)
 {
     return &IfxBtPlatformConfig;
+}
+
+const IFXBT_PLATFORM_UART_CONFIG*
+IfxBtPlatformGetUartConfig(VOID)
+{
+    return &IfxBtPlatformUartConfig;
 }
 
 NTSTATUS
@@ -149,11 +182,6 @@ IfxBtPlatformValidateConfig(
         goto Exit;
     }
 
-    if (Config->UartFlowControlPlaceholder != IfxBtPlatformUartFlowControlPlaceholderUnknown) {
-        Status = STATUS_INVALID_PARAMETER;
-        goto Exit;
-    }
-
     if (Config->FirmwareSequenceState != IfxBtPlatformFirmwareSequencePlaceholderUnknown) {
         Status = STATUS_INVALID_PARAMETER;
         goto Exit;
@@ -175,6 +203,68 @@ IfxBtPlatformValidateConfig(
     }
 
 Exit:
+
+    return Status;
+}
+
+NTSTATUS
+IfxBtPlatformValidateUartConfig(
+    _In_ const IFXBT_PLATFORM_UART_CONFIG* UartConfig
+    )
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT validate entry uartConfig=%p",
+            UartConfig));
+
+    if (UartConfig == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (UartConfig->Size != (ULONG)sizeof(IFXBT_PLATFORM_UART_CONFIG)) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (UartConfig->PlaceholderUartConfig) {
+        Status = STATUS_DEVICE_NOT_READY;
+        IfxBtPlatformLogMissingUartPlaceholders();
+        goto Exit;
+    }
+
+    if (UartConfig->InitialBaud == 0 ||
+        UartConfig->OperationalBaud == 0 ||
+        UartConfig->DataBits < 5 ||
+        UartConfig->DataBits > 8 ||
+        UartConfig->Parity > 4 ||
+        UartConfig->StopBits > 2 ||
+        UartConfig->FlowControl != IfxBtPlatformUartFlowControlPlatformProvided ||
+        UartConfig->TimeoutPolicyPlaceholder ||
+        UartConfig->PurgePolicyPlaceholder) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if ((UartConfig->PurgeMask &
+         ~(IfxBtPlatformUartPurgeTxAbort |
+           IfxBtPlatformUartPurgeRxAbort |
+           IfxBtPlatformUartPurgeTxClear |
+           IfxBtPlatformUartPurgeRxClear)) != 0) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+Exit:
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONTRACT validate exit status=%!STATUS!",
+                Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT validate exit status=%!STATUS!",
+                Status));
+    }
 
     return Status;
 }
@@ -224,6 +314,58 @@ Exit:
     }
 
     return Status;
+}
+
+static
+VOID
+IfxBtPlatformLogMissingUartPlaceholders(VOID)
+{
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_INITIAL_BAUD"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_OPERATIONAL_BAUD"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_DATA_BITS"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_PARITY"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_STOP_BITS"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_FLOW_CONTROL"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_TIMEOUTS"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_PURGE_POLICY"));
+    DoTrace(LEVEL_WARNING, TFLAG_UART, ("UART_CONTRACT missing TODO_REAL_UART_BAUD_SWITCH_REQUIRED"));
+}
+
+VOID
+IfxBtPlatformLogUartConfig(
+    _In_ const IFXBT_PLATFORM_UART_CONFIG* UartConfig
+    )
+{
+    if (UartConfig == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_CONTRACT missing uart config"));
+        return;
+    }
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT initial_baud=%lu placeholder=%d",
+            UartConfig->InitialBaud,
+            UartConfig->PlaceholderUartConfig ? 1 : 0));
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT operational_baud=%lu placeholder=%d",
+            UartConfig->OperationalBaud,
+            UartConfig->PlaceholderUartConfig ? 1 : 0));
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT line_control data_bits=%d parity=%d stop_bits=%d placeholder=%d",
+            UartConfig->DataBits,
+            UartConfig->Parity,
+            UartConfig->StopBits,
+            UartConfig->PlaceholderUartConfig ? 1 : 0));
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT flow_control=%d placeholder=%d",
+            UartConfig->FlowControl,
+            UartConfig->PlaceholderUartConfig ? 1 : 0));
+
+    DoTrace(LEVEL_INFO, TFLAG_UART, ("UART_CONTRACT baud_switch_required=%d placeholder=%d",
+            UartConfig->RequiresBaudSwitch ? 1 : 0,
+            UartConfig->PlaceholderUartConfig ? 1 : 0));
+
+    if (UartConfig->PlaceholderUartConfig) {
+        IfxBtPlatformLogMissingUartPlaceholders();
+    }
 }
 
 VOID
@@ -323,10 +465,7 @@ IfxBtPlatformLogConfig(
             Config->AcpiPlaceholderHardwareId));
 
     IfxBtPlatformLogAcpiContract(Config);
-
-    DoTrace(LEVEL_INFO, TFLAG_UART, ("PLATFORM_CONFIG uart_baud_placeholder=%lu flow_control_placeholder=%d",
-            Config->InitialUartBaudPlaceholder,
-            Config->UartFlowControlPlaceholder));
+    IfxBtPlatformLogUartConfig(IfxBtPlatformGetUartConfig());
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("PLATFORM_CONFIG firmware_sequence_placeholder=%d",
             Config->FirmwareSequenceState));
