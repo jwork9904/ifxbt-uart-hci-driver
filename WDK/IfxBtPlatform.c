@@ -25,11 +25,38 @@ Environment:
     L"Infineon CYW55571 Bluetooth UART placeholder platform"
 
 //
-// TODO_REAL_ACPI_HID PLACEHOLDER_PLATFORM_VALUE:
-// Intentionally fake parent ACPI _HID placeholder for platform bring-up only.
+// TODO_REAL_BT_CLIENT_ACPI_HID PLACEHOLDER_PLATFORM_VALUE:
+// Intentionally fake Bluetooth client/function ACPI _HID placeholder for
+// platform bring-up only. IfxBtUartHci must not bind to the lower UART
+// controller node.
 //
 #define IFXBT_PLATFORM_ACPI_PLACEHOLDER_HID \
     L"ACPI\\PLACEHOLDER_CYW55571_BT_UART"
+
+//
+// TODO_REAL_BT_CLIENT_ACPI_CID PLACEHOLDER_PLATFORM_VALUE:
+// Real Bluetooth client/function _CID remains pending from Advantech/TL.
+//
+#define IFXBT_PLATFORM_BT_CLIENT_ACPI_CID_PLACEHOLDER \
+    L"TODO_REAL_BT_CLIENT_ACPI_CID"
+
+//
+// TODO_REAL_BT_CLIENT_ACPI_CRS PLACEHOLDER_PLATFORM_VALUE:
+// Real Bluetooth client/function _CRS must expose a UART SerialBus/ResourceHub
+// reference to the lower UAR7/QCOM0E16 controller when platform data arrives.
+//
+#define IFXBT_PLATFORM_BT_CLIENT_ACPI_CRS_PLACEHOLDER \
+    L"TODO_REAL_BT_CLIENT_ACPI_CRS"
+
+//
+// Phase 14P evidence from TL/Advantech inspection:
+// QCOM0E16 instance 7 is the lower Qualcomm UART controller serviced by qcuart,
+// not the CYW55571 Bluetooth client/function node for IfxBtUartHci binding.
+//
+#define IFXBT_PLATFORM_KNOWN_LOWER_UART_CONTROLLER_HID \
+    L"ACPI\\QCOM0E16"
+#define IFXBT_PLATFORM_KNOWN_LOWER_UART_CONTROLLER_INSTANCE_HINT \
+    L"ACPI\\QCOM0E16\\7"
 
 //
 // TODO_REAL_UART_BAUD PLACEHOLDER_PLATFORM_VALUE:
@@ -55,6 +82,11 @@ static const IFXBT_PLATFORM_CONFIG IfxBtPlatformConfig = {
     (ULONG)sizeof(IFXBT_PLATFORM_CONFIG),
     IFXBT_PLATFORM_NAME,
     IFXBT_PLATFORM_ACPI_PLACEHOLDER_HID,
+    IFXBT_PLATFORM_ACPI_PLACEHOLDER_HID, // TODO_REAL_BT_CLIENT_ACPI_HID PLACEHOLDER_PLATFORM_VALUE
+    IFXBT_PLATFORM_BT_CLIENT_ACPI_CID_PLACEHOLDER,
+    IFXBT_PLATFORM_BT_CLIENT_ACPI_CRS_PLACEHOLDER,
+    IFXBT_PLATFORM_KNOWN_LOWER_UART_CONTROLLER_HID,
+    IFXBT_PLATFORM_KNOWN_LOWER_UART_CONTROLLER_INSTANCE_HINT,
     IFXBT_PLATFORM_INITIAL_UART_BAUD_PLACEHOLDER,
     IfxBtPlatformUartFlowControlPlaceholderUnknown, // TODO_REAL_UART_FLOW_CONTROL PLACEHOLDER_PLATFORM_VALUE
     IFXBT_PLATFORM_GPIO_BT_RESET_PLACEHOLDER,
@@ -63,8 +95,16 @@ static const IFXBT_PLATFORM_CONFIG IfxBtPlatformConfig = {
     IFXBT_PLATFORM_GPIO_DEV_WAKE_PLACEHOLDER,
     IfxBtPlatformPowerResourcesPlaceholderOnly,
     IfxBtPlatformFirmwareSequencePlaceholderUnknown, // TODO_REAL_FIRMWARE_SEQUENCE PLACEHOLDER_PLATFORM_VALUE
+    TRUE,
+    TRUE,
     TRUE
 };
+
+static
+VOID
+IfxBtPlatformLogAcpiContract(
+    _In_ const IFXBT_PLATFORM_CONFIG* Config
+    );
 
 const IFXBT_PLATFORM_CONFIG*
 IfxBtPlatformGetConfig(VOID)
@@ -91,6 +131,11 @@ IfxBtPlatformValidateConfig(
 
     if (Config->PlatformName == NULL ||
         Config->AcpiPlaceholderHardwareId == NULL ||
+        Config->BluetoothClientAcpiHardwareIdPlaceholder == NULL ||
+        Config->BluetoothClientAcpiCompatibleIdPlaceholder == NULL ||
+        Config->BluetoothClientAcpiCrsPlaceholder == NULL ||
+        Config->KnownLowerUartControllerHardwareId == NULL ||
+        Config->KnownLowerUartControllerInstanceHint == NULL ||
         Config->ResetGpioPlaceholder == NULL ||
         Config->RegOnGpioPlaceholder == NULL ||
         Config->HostWakeGpioPlaceholder == NULL ||
@@ -110,6 +155,16 @@ IfxBtPlatformValidateConfig(
     }
 
     if (Config->FirmwareSequenceState != IfxBtPlatformFirmwareSequencePlaceholderUnknown) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (Config->RequiresBluetoothClientAcpiNode == FALSE) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (Config->CandidateQcom0e16IsLowerControllerOnly == FALSE) {
         Status = STATUS_INVALID_PARAMETER;
         goto Exit;
     }
@@ -206,6 +261,50 @@ IfxBtPlatformLogPowerPlaceholderConfig(
     DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_PLACEHOLDER wake resources unknown no HOST_WAKE interrupt programmed no DEV_WAKE protocol applied"));
 }
 
+static
+VOID
+IfxBtPlatformLogAcpiContract(
+    _In_ const IFXBT_PLATFORM_CONFIG* Config
+    )
+{
+    PCWSTR BluetoothClientAcpiHardwareIdPlaceholder;
+    PCWSTR KnownLowerUartControllerHardwareId;
+    PCWSTR KnownLowerUartControllerInstanceHint;
+
+    if (Config == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("ACPI_CONTRACT missing config"));
+        return;
+    }
+
+    BluetoothClientAcpiHardwareIdPlaceholder =
+        (Config->BluetoothClientAcpiHardwareIdPlaceholder != NULL) ?
+            Config->BluetoothClientAcpiHardwareIdPlaceholder :
+            L"<null>";
+    KnownLowerUartControllerHardwareId =
+        (Config->KnownLowerUartControllerHardwareId != NULL) ?
+            Config->KnownLowerUartControllerHardwareId :
+            L"<null>";
+    KnownLowerUartControllerInstanceHint =
+        (Config->KnownLowerUartControllerInstanceHint != NULL) ?
+            Config->KnownLowerUartControllerInstanceHint :
+            L"<null>";
+
+    DoTrace(LEVEL_WARNING, TFLAG_PNP, ("ACPI_CONTRACT bt_client_hid_placeholder=%S",
+            BluetoothClientAcpiHardwareIdPlaceholder));
+
+    DoTrace(LEVEL_WARNING, TFLAG_PNP, ("ACPI_CONTRACT lower_uart_controller_hid=%S",
+            KnownLowerUartControllerHardwareId));
+
+    DoTrace(LEVEL_WARNING, TFLAG_PNP, ("ACPI_CONTRACT lower_uart_controller_instance_hint=%S",
+            KnownLowerUartControllerInstanceHint));
+
+    DoTrace(LEVEL_WARNING, TFLAG_PNP, ("ACPI_CONTRACT qcom0e16_is_lower_controller_only=%d",
+            Config->CandidateQcom0e16IsLowerControllerOnly ? 1 : 0));
+
+    DoTrace(LEVEL_WARNING, TFLAG_PNP, ("ACPI_CONTRACT awaiting_real_bt_child_node=%d",
+            Config->RequiresBluetoothClientAcpiNode ? 1 : 0));
+}
+
 VOID
 IfxBtPlatformLogConfig(
     _In_ const IFXBT_PLATFORM_CONFIG* Config
@@ -222,6 +321,8 @@ IfxBtPlatformLogConfig(
 
     DoTrace(LEVEL_INFO, TFLAG_PNP, ("PLATFORM_CONFIG acpi_placeholder_hid=%S",
             Config->AcpiPlaceholderHardwareId));
+
+    IfxBtPlatformLogAcpiContract(Config);
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("PLATFORM_CONFIG uart_baud_placeholder=%lu flow_control_placeholder=%d",
             Config->InitialUartBaudPlaceholder,

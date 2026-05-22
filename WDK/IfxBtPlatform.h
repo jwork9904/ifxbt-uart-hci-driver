@@ -38,6 +38,11 @@ typedef struct _IFXBT_PLATFORM_CONFIG {
     ULONG Size;
     PCWSTR PlatformName;
     PCWSTR AcpiPlaceholderHardwareId;
+    PCWSTR BluetoothClientAcpiHardwareIdPlaceholder;
+    PCWSTR BluetoothClientAcpiCompatibleIdPlaceholder;
+    PCWSTR BluetoothClientAcpiCrsPlaceholder;
+    PCWSTR KnownLowerUartControllerHardwareId;
+    PCWSTR KnownLowerUartControllerInstanceHint;
     ULONG InitialUartBaudPlaceholder;
     IFXBT_PLATFORM_UART_FLOW_CONTROL UartFlowControlPlaceholder;
     PCWSTR ResetGpioPlaceholder;
@@ -46,6 +51,8 @@ typedef struct _IFXBT_PLATFORM_CONFIG {
     PCWSTR DevWakeGpioPlaceholder;
     IFXBT_PLATFORM_POWER_RESOURCE_STATE PowerResourceState;
     IFXBT_PLATFORM_FIRMWARE_SEQUENCE_STATE FirmwareSequenceState;
+    BOOLEAN RequiresBluetoothClientAcpiNode;
+    BOOLEAN CandidateQcom0e16IsLowerControllerOnly;
     BOOLEAN PlaceholderPlatformValue;
 } IFXBT_PLATFORM_CONFIG, *PIFXBT_PLATFORM_CONFIG;
 
