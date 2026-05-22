@@ -228,6 +228,16 @@ IfxBtSetFailureReason(
     }
 }
 
+VOID
+IfxBtSetTransportFailure(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_FAILURE_REASON Reason,
+    _In_ NTSTATUS Status
+    )
+{
+    IfxBtSetFailureReason(FdoExtension, Reason, Status);
+}
+
 static
 BOOLEAN
 IfxBtIsParentTransportReady(
@@ -862,6 +872,7 @@ Return Value:
 --*/
 {
     DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceDisarmWake entry device=%p", _Device));
+    DeviceDisableWakeControl(_Device);
     DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceDisarmWake exit device=%p", _Device));
 }
 
@@ -886,8 +897,10 @@ Return Value:
 
 --*/
 {
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
+
     DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceArmWake entry device=%p", _Device));
+    Status = DeviceEnableWakeControl(_Device, PowerSystemWorking);
     DoTrace(LEVEL_INFO, TFLAG_POWER,("POWER FdoEvtDeviceArmWake exit device=%p status=%!STATUS!", _Device, Status));
 
     return Status;
@@ -1437,6 +1450,13 @@ Return Value:
         if (FailureReason == IfxBtFailureNone) {
             FailureReason = IfxBtFailureUartConfigFailed;
         }
+        else if (FailureReason == IfxBtFailurePowerResourcesPlaceholder ||
+                 FailureReason == IfxBtFailurePowerSequenceFailed) {
+            Status = FdoExtension->LastFailureStatus;
+            if (NT_SUCCESS(Status)) {
+                Status = STATUS_DEVICE_NOT_READY;
+            }
+        }
         IfxBtSetFailureReason(FdoExtension,
                               FailureReason,
                               Status);
@@ -1724,6 +1744,13 @@ Return Value:
             FailureReason = FdoExtension->LastFailureReason;
             if (FailureReason == IfxBtFailureNone) {
                 FailureReason = IfxBtFailureUartConfigFailed;
+            }
+            else if (FailureReason == IfxBtFailurePowerResourcesPlaceholder ||
+                     FailureReason == IfxBtFailurePowerSequenceFailed) {
+                Status = FdoExtension->LastFailureStatus;
+                if (NT_SUCCESS(Status)) {
+                    Status = STATUS_DEVICE_NOT_READY;
+                }
             }
             IfxBtSetFailureReason(FdoExtension,
                                   FailureReason,

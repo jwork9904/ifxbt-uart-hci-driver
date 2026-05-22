@@ -409,6 +409,11 @@ DRIVER_INITIALIZE DriverEntry;
 // FDO.c
 //
 
+VOID
+IfxBtSetTransportFailure(_Inout_opt_ PFDO_EXTENSION FdoExtension,
+                         _In_ IFXBT_FAILURE_REASON Reason,
+                         _In_ NTSTATUS Status);
+
 NTSTATUS
 HlpInitializeFdoExtension(WDFDEVICE   _Device);
 

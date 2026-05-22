@@ -50,6 +50,311 @@ IfxBtDeviceLogPowerPlaceholderState(
             Operation));
 }
 
+static
+VOID
+IfxBtLogPowerConfigStage(
+    _In_ IFXBT_POWER_STAGE Stage,
+    _In_ NTSTATUS Status
+    )
+{
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_CONFIG stage=%d status=%!STATUS!",
+                Stage, Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_CONFIG stage=%d status=%!STATUS!",
+                Stage, Status));
+    }
+}
+
+static
+IFXBT_FAILURE_REASON
+IfxBtMapPowerFailureReason(
+    _In_opt_ const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig,
+    _In_ NTSTATUS Status
+    )
+{
+    if (Status == STATUS_DEVICE_NOT_READY &&
+        PowerConfig != NULL &&
+        PowerConfig->PlaceholderPowerConfig) {
+        return IfxBtFailurePowerResourcesPlaceholder;
+    }
+
+    return IfxBtFailurePowerSequenceFailed;
+}
+
+static
+VOID
+IfxBtSetPowerFailure(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_opt_ const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig,
+    _In_ NTSTATUS Status
+    )
+{
+    IFXBT_FAILURE_REASON FailureReason;
+
+    if (FdoExtension == NULL) {
+        return;
+    }
+
+    FdoExtension->DeviceInitialized = FALSE;
+    FailureReason = IfxBtMapPowerFailureReason(PowerConfig, Status);
+    IfxBtSetTransportFailure(FdoExtension, FailureReason, Status);
+}
+
+static
+VOID
+IfxBtRollbackPowerSequence(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_POWER_STAGE FailedStage,
+    _In_ NTSTATUS FailureStatus
+    )
+{
+    UNREFERENCED_PARAMETER(FdoExtension);
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONFIG rollback_no_owned_resources failed_stage=%d status=%!STATUS!",
+            FailedStage, FailureStatus));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONFIG cleanup_no_owned_resources status=%!STATUS!",
+            STATUS_SUCCESS));
+}
+
+static
+NTSTATUS
+IfxBtPowerOnController(
+    _In_ WDFDEVICE Device,
+    _In_ PCWSTR Operation
+    )
+{
+    PFDO_EXTENSION FdoExtension;
+    const IFXBT_PLATFORM_CONFIG* PlatformConfig;
+    const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig;
+    NTSTATUS Status = STATUS_SUCCESS;
+    IFXBT_POWER_STAGE Stage = IfxBtPowerStageNotStarted;
+
+    if (Device == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        IfxBtLogPowerConfigStage(IfxBtPowerStageFailed, Status);
+        return Status;
+    }
+
+    FdoExtension = FdoGetExtension(Device);
+    PlatformConfig = IfxBtPlatformGetConfig();
+    PowerConfig = IfxBtPlatformGetPowerConfig();
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_CONFIG power_on entry operation=%S device=%p",
+            Operation, Device));
+
+    IfxBtLogPowerConfigStage(Stage, STATUS_SUCCESS);
+
+    Stage = IfxBtPowerStageValidatePlatformConfig;
+    Status = IfxBtPlatformValidateConfig(PlatformConfig);
+    IfxBtLogPowerConfigStage(Stage, Status);
+    if (!NT_SUCCESS(Status)) {
+        goto Failed;
+    }
+
+    IfxBtPlatformLogPowerConfig(PowerConfig);
+
+    Stage = IfxBtPowerStageValidatePowerResources;
+    Status = IfxBtPlatformValidatePowerConfig(PowerConfig);
+    IfxBtLogPowerConfigStage(Stage, Status);
+    if (!NT_SUCCESS(Status)) {
+        if (Status == STATUS_DEVICE_NOT_READY &&
+            PowerConfig != NULL &&
+            PowerConfig->PlaceholderPowerConfig) {
+            DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONFIG placeholder_blocking_power_on status=%!STATUS!",
+                    Status));
+        }
+        goto Failed;
+    }
+
+    Stage = IfxBtPowerStageDetermineOwnership;
+    IfxBtLogPowerConfigStage(Stage, STATUS_SUCCESS);
+
+    if (PowerConfig->PowerOwnership == IfxBtPowerOwnershipPlatformOwnedAlwaysOn ||
+        PowerConfig->PowerOwnership == IfxBtPowerOwnershipAcpiPowerResourceOwned) {
+        Stage = IfxBtPowerStageComplete;
+        IfxBtLogPowerConfigStage(Stage, STATUS_SUCCESS);
+        return STATUS_SUCCESS;
+    }
+
+    //
+    // Driver-controlled GPIO sequencing is intentionally not implemented until
+    // the real Resource Hub target, polarity, timing, and ownership contract
+    // are provided.
+    //
+    Status = STATUS_DEVICE_CONFIGURATION_ERROR;
+    DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_CONFIG driver_controlled_power_requires_real_gpio_contract status=%!STATUS!",
+            Status));
+
+Failed:
+
+    IfxBtRollbackPowerSequence(FdoExtension, Stage, Status);
+    Stage = IfxBtPowerStageFailed;
+    IfxBtLogPowerConfigStage(Stage, Status);
+    IfxBtSetPowerFailure(FdoExtension, PowerConfig, Status);
+
+    return Status;
+}
+
+static
+NTSTATUS
+IfxBtPowerOffController(
+    _In_ WDFDEVICE Device,
+    _In_ PCWSTR Operation
+    )
+{
+    const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig;
+    NTSTATUS Status;
+    IFXBT_POWER_STAGE Stage = IfxBtPowerStageNotStarted;
+
+    if (Device == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        IfxBtLogPowerConfigStage(IfxBtPowerStageFailed, Status);
+        return Status;
+    }
+
+    PowerConfig = IfxBtPlatformGetPowerConfig();
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_CONFIG power_off entry operation=%S device=%p",
+            Operation, Device));
+
+    IfxBtLogPowerConfigStage(Stage, STATUS_SUCCESS);
+    IfxBtPlatformLogPowerConfig(PowerConfig);
+
+    Stage = IfxBtPowerStageValidatePowerResources;
+    Status = IfxBtPlatformValidatePowerConfig(PowerConfig);
+    IfxBtLogPowerConfigStage(Stage, Status);
+
+    if (Status == STATUS_DEVICE_NOT_READY &&
+        PowerConfig != NULL &&
+        PowerConfig->PlaceholderPowerConfig) {
+        Status = STATUS_SUCCESS;
+        DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONFIG cleanup_no_owned_resources status=%!STATUS!",
+                Status));
+        Stage = IfxBtPowerStageComplete;
+        IfxBtLogPowerConfigStage(Stage, Status);
+        return Status;
+    }
+
+    if (!NT_SUCCESS(Status)) {
+        Stage = IfxBtPowerStageFailed;
+        IfxBtLogPowerConfigStage(Stage, Status);
+        return Status;
+    }
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_CONFIG power_off_no_gpio_actions status=%!STATUS!",
+            STATUS_SUCCESS));
+    Stage = IfxBtPowerStageComplete;
+    IfxBtLogPowerConfigStage(Stage, STATUS_SUCCESS);
+
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+IfxBtConfigureWake(
+    _In_ WDFDEVICE Device,
+    _In_ SYSTEM_POWER_STATE PowerState,
+    _In_ BOOLEAN ArmWake
+    )
+{
+    const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig;
+    NTSTATUS Status;
+    IFXBT_POWER_STAGE Stage;
+
+    if (Device == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        IfxBtLogPowerConfigStage(IfxBtPowerStageFailed, Status);
+        return Status;
+    }
+
+    PowerConfig = IfxBtPlatformGetPowerConfig();
+    Stage = ArmWake ? IfxBtPowerStageConfigureHostWake : IfxBtPowerStageConfigureDevWake;
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("WAKE_CONFIG entry device=%p powerState=%d arm=%d",
+            Device, PowerState, ArmWake ? 1 : 0));
+
+    IfxBtPlatformLogPowerConfig(PowerConfig);
+    Status = IfxBtPlatformValidatePowerConfig(PowerConfig);
+    IfxBtLogPowerConfigStage(Stage, Status);
+
+    if (Status == STATUS_DEVICE_NOT_READY &&
+        PowerConfig != NULL &&
+        PowerConfig->PlaceholderPowerConfig) {
+        if (ArmWake) {
+            DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_CONFIG placeholder_blocking_wake_arm status=%!STATUS!",
+                    Status));
+            return Status;
+        }
+
+        Status = STATUS_SUCCESS;
+        DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONFIG cleanup_no_owned_resources status=%!STATUS!",
+                Status));
+        return Status;
+    }
+
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
+
+    if (PowerConfig->HostWakeOwnership == IfxBtPowerOwnershipDriverControlledGpio ||
+        PowerConfig->DevWakeOwnership == IfxBtPowerOwnershipDriverControlledGpio) {
+        Status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("WAKE_CONFIG driver_controlled_wake_requires_real_gpio_contract status=%!STATUS!",
+                Status));
+        return Status;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+IfxBtDoControllerReset(
+    _In_ WDFDEVICE Fdo
+    )
+{
+    PFDO_EXTENSION FdoExtension;
+    const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig;
+    NTSTATUS Status;
+    IFXBT_POWER_STAGE Stage = IfxBtPowerStageAssertReset;
+
+    if (Fdo == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        IfxBtLogPowerConfigStage(IfxBtPowerStageFailed, Status);
+        return Status;
+    }
+
+    FdoExtension = FdoGetExtension(Fdo);
+    PowerConfig = IfxBtPlatformGetPowerConfig();
+
+    IfxBtPlatformLogPowerConfig(PowerConfig);
+    Status = IfxBtPlatformValidatePowerConfig(PowerConfig);
+    IfxBtLogPowerConfigStage(Stage, Status);
+
+    if (Status == STATUS_DEVICE_NOT_READY &&
+        PowerConfig != NULL &&
+        PowerConfig->PlaceholderPowerConfig) {
+        DoTrace(LEVEL_WARNING, TFLAG_POWER, ("RESET_CONFIG placeholder_reset_unavailable status=%!STATUS!",
+                Status));
+        IfxBtSetPowerFailure(FdoExtension, PowerConfig, Status);
+        return Status;
+    }
+
+    if (!NT_SUCCESS(Status)) {
+        IfxBtSetPowerFailure(FdoExtension, PowerConfig, Status);
+        return Status;
+    }
+
+    Status = STATUS_DEVICE_CONFIGURATION_ERROR;
+    DoTrace(LEVEL_ERROR, TFLAG_POWER, ("RESET_CONFIG real_reset_sequence_not_implemented status=%!STATUS!",
+            Status));
+    IfxBtSetPowerFailure(FdoExtension, PowerConfig, Status);
+
+    return Status;
+}
+
 VOID
 DeviceQueryDeviceParameters(
     _In_ WDFDRIVER  _Driver
@@ -124,14 +429,18 @@ Return Value:
     
 --*/      
 {
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnableWakeControl entry device=%p powerState=%d",
             _Device, _PowerState));
 
     IfxBtDeviceLogPowerPlaceholderState(L"DeviceEnableWakeControl");
 
-    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_PLACEHOLDER DeviceEnableWakeControl no HOST_WAKE interrupt programmed no DEV_WAKE protocol applied"));
+    Status = IfxBtConfigureWake(_Device, _PowerState, TRUE);
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("WAKE_PLACEHOLDER DeviceEnableWakeControl wake arm unavailable status=%!STATUS!",
+                Status));
+    }
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnableWakeControl exit status=%!STATUS!", Status));
 
@@ -162,6 +471,8 @@ Return Value:
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDisableWakeControl entry device=%p", _Device));
 
     IfxBtDeviceLogPowerPlaceholderState(L"DeviceDisableWakeControl");
+
+    (VOID)IfxBtConfigureWake(_Device, PowerSystemWorking, FALSE);
 
     DoTrace(LEVEL_WARNING, TFLAG_POWER, ("WAKE_PLACEHOLDER DeviceDisableWakeControl no wake GPIO or interrupt state changed"));
 
@@ -559,6 +870,7 @@ Return Value:
     NTSTATUS PlatformStatus;
     NTSTATUS FirmwareStatus;
     NTSTATUS UartStatus;
+    NTSTATUS PowerStatus;
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
             _FdoExtension, _IoTargetSerial, _RequestSync, _IsUartReset));
@@ -621,6 +933,16 @@ Return Value:
         goto Exit;
     }
 
+    PowerStatus = IfxBtPowerOnController(_FdoExtension->WdfDevice,
+                                         L"DeviceInitializePowerReadiness");
+    if (!NT_SUCCESS(PowerStatus))
+    {
+        Initialized = FALSE;
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("DEVICE_STUB DeviceInitialize power readiness failed status=%!STATUS!",
+                PowerStatus));
+        goto Exit;
+    }
+
 Exit:
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize exit initialized=%d", Initialized));
@@ -654,14 +976,21 @@ Return Value:
 --*/
 
 {
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnable entry device=%p enabled=%d", _Device, _IsEnabled));
 
     IfxBtDeviceLogPowerPlaceholderState(L"DeviceEnable");
 
-    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER DeviceEnable enabled=%d no BT_REG_ON or reset GPIO toggled",
-            _IsEnabled));
+    if (_IsEnabled) {
+        Status = IfxBtPowerOnController(_Device, L"DeviceEnable");
+    }
+    else {
+        Status = IfxBtPowerOffController(_Device, L"DeviceEnableDisable");
+    }
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER DeviceEnable enabled=%d no BT_REG_ON or reset GPIO toggled status=%!STATUS!",
+            _IsEnabled, Status));
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceEnable exit status=%!STATUS!", Status));
 
@@ -689,13 +1018,16 @@ Return Value:
 
 --*/
 {
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOn entry device=%p", _Device));
 
     IfxBtDeviceLogPowerPlaceholderState(L"DevicePowerOn");
 
-    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER DevicePowerOn no regulator control no GPIO toggles no reset timing no power sequencing"));
+    Status = IfxBtPowerOnController(_Device, L"DevicePowerOn");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER DevicePowerOn no regulator control no GPIO toggles no reset timing no power sequencing status=%!STATUS!",
+            Status));
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOn exit status=%!STATUS!", Status));
 
@@ -722,13 +1054,16 @@ Return Value:
 
 --*/
 {
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
     
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOff entry device=%p", _Device));
 
     IfxBtDeviceLogPowerPlaceholderState(L"DevicePowerOff");
 
-    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER DevicePowerOff no-op placeholder no regulator control no GPIO toggles"));
+    Status = IfxBtPowerOffController(_Device, L"DevicePowerOff");
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER DevicePowerOff no-op placeholder no regulator control no GPIO toggles status=%!STATUS!",
+            Status));
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DevicePowerOff exit status=%!STATUS!", Status));
 
@@ -756,11 +1091,16 @@ Return Value:
 
 --*/
 {
+    NTSTATUS Status;
+
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR entry fdo=%p", _Fdo));
 
     IfxBtDeviceLogPowerPlaceholderState(L"DeviceDoPLDR");
 
-    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("RESET_PLACEHOLDER DeviceDoPLDR no hardware reset asserted no reset timing applied"));
+    Status = IfxBtDoControllerReset(_Fdo);
 
-    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR exit fdo=%p", _Fdo));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("RESET_PLACEHOLDER DeviceDoPLDR no hardware reset asserted no reset timing applied status=%!STATUS!",
+            Status));
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR exit fdo=%p status=%!STATUS!", _Fdo, Status));
 }

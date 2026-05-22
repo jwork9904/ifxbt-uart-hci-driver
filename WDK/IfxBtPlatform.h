@@ -55,6 +55,30 @@ typedef enum _IFXBT_PLATFORM_POWER_RESOURCE_STATE {
     IfxBtPlatformPowerResourcesPlaceholderOnly = 0
 } IFXBT_PLATFORM_POWER_RESOURCE_STATE;
 
+typedef enum _IFXBT_POWER_OWNERSHIP {
+    IfxBtPowerOwnershipPlaceholderUnknown = 0,
+    IfxBtPowerOwnershipPlatformOwnedAlwaysOn,
+    IfxBtPowerOwnershipAcpiPowerResourceOwned,
+    IfxBtPowerOwnershipDriverControlledGpio,
+    IfxBtPowerOwnershipNotPresentOptional
+} IFXBT_POWER_OWNERSHIP;
+
+typedef enum _IFXBT_POWER_STAGE {
+    IfxBtPowerStageNotStarted = 0,
+    IfxBtPowerStageValidatePlatformConfig,
+    IfxBtPowerStageValidatePowerResources,
+    IfxBtPowerStageDetermineOwnership,
+    IfxBtPowerStageAssertReset,
+    IfxBtPowerStageEnableRegOn,
+    IfxBtPowerStageWaitPowerStable,
+    IfxBtPowerStageDeassertReset,
+    IfxBtPowerStageWaitControllerBoot,
+    IfxBtPowerStageConfigureDevWake,
+    IfxBtPowerStageConfigureHostWake,
+    IfxBtPowerStageComplete,
+    IfxBtPowerStageFailed
+} IFXBT_POWER_STAGE;
+
 typedef struct _IFXBT_PLATFORM_UART_TIMEOUTS_CONFIG {
     ULONG ReadIntervalTimeout;
     ULONG ReadTotalTimeoutMultiplier;
@@ -87,6 +111,27 @@ typedef struct _IFXBT_PLATFORM_UART_CONFIG {
     BOOLEAN PlaceholderUartConfig;
 } IFXBT_PLATFORM_UART_CONFIG, *PIFXBT_PLATFORM_UART_CONFIG;
 
+typedef struct _IFXBT_PLATFORM_POWER_CONFIG {
+    ULONG Size;
+    IFXBT_POWER_OWNERSHIP PowerOwnership;
+    IFXBT_POWER_OWNERSHIP ResetOwnership;
+    IFXBT_POWER_OWNERSHIP DevWakeOwnership;
+    IFXBT_POWER_OWNERSHIP HostWakeOwnership;
+    PCWSTR RegOnGpioPlaceholderName;
+    PCWSTR ResetGpioPlaceholderName;
+    PCWSTR DevWakeGpioPlaceholderName;
+    PCWSTR HostWakeGpioPlaceholderName;
+    BOOLEAN RegOnActiveHighPlaceholder;
+    BOOLEAN ResetActiveHighPlaceholder;
+    ULONG HostWakeInterruptPolarityPlaceholder;
+    BOOLEAN DevWakeActiveHighPlaceholder;
+    ULONG PowerStableDelayMsPlaceholder;
+    ULONG ResetAssertDelayMsPlaceholder;
+    ULONG PostResetDelayMsPlaceholder;
+    ULONG HostWakeDebounceMsPlaceholder;
+    BOOLEAN PlaceholderPowerConfig;
+} IFXBT_PLATFORM_POWER_CONFIG, *PIFXBT_PLATFORM_POWER_CONFIG;
+
 typedef struct _IFXBT_PLATFORM_CONFIG {
     ULONG Size;
     PCWSTR PlatformName;
@@ -113,6 +158,9 @@ IfxBtPlatformGetConfig(VOID);
 const IFXBT_PLATFORM_UART_CONFIG*
 IfxBtPlatformGetUartConfig(VOID);
 
+const IFXBT_PLATFORM_POWER_CONFIG*
+IfxBtPlatformGetPowerConfig(VOID);
+
 NTSTATUS
 IfxBtPlatformValidateConfig(
     _In_ const IFXBT_PLATFORM_CONFIG* Config
@@ -136,6 +184,16 @@ IfxBtPlatformLogUartConfig(
 NTSTATUS
 IfxBtPlatformValidatePowerResources(
     _In_ const IFXBT_PLATFORM_CONFIG* Config
+    );
+
+NTSTATUS
+IfxBtPlatformValidatePowerConfig(
+    _In_ const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig
+    );
+
+VOID
+IfxBtPlatformLogPowerConfig(
+    _In_ const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig
     );
 
 VOID

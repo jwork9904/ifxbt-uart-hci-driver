@@ -86,6 +86,20 @@ Environment:
 #define IFXBT_PLATFORM_GPIO_DEV_WAKE_PLACEHOLDER \
     L"TODO_REAL_GPIO_RESOURCES:DEV_WAKE"
 
+//
+// Power/reset/wake contract placeholders. These are symbolic contract slots,
+// not hardware resources. They must fail closed until the board contract
+// provides ownership, resources, polarity, timing, and wake trigger details.
+//
+#define TODO_REAL_POWER_OWNERSHIP IfxBtPowerOwnershipPlaceholderUnknown
+#define TODO_REAL_GPIO_BT_REG_ON IFXBT_PLATFORM_GPIO_BT_REG_ON_PLACEHOLDER
+#define TODO_REAL_GPIO_RESET IFXBT_PLATFORM_GPIO_BT_RESET_PLACEHOLDER
+#define TODO_REAL_GPIO_DEV_WAKE IFXBT_PLATFORM_GPIO_DEV_WAKE_PLACEHOLDER
+#define TODO_REAL_GPIO_HOST_WAKE IFXBT_PLATFORM_GPIO_HOST_WAKE_PLACEHOLDER
+#define TODO_REAL_GPIO_POLARITY FALSE
+#define TODO_REAL_POWER_TIMING 0UL
+#define TODO_REAL_WAKE_TRIGGER 0UL
+
 static const IFXBT_PLATFORM_UART_CONFIG IfxBtPlatformUartConfig = {
     (ULONG)sizeof(IFXBT_PLATFORM_UART_CONFIG),
     TODO_REAL_UART_INITIAL_BAUD,
@@ -100,6 +114,27 @@ static const IFXBT_PLATFORM_UART_CONFIG IfxBtPlatformUartConfig = {
     TODO_REAL_UART_TIMEOUTS,
     { 0UL, 0UL, 0, 0 }, // TODO_REAL_UART_FLOW_CONTROL handflow policy pending
     TODO_REAL_UART_PURGE_POLICY,
+    TRUE
+};
+
+static const IFXBT_PLATFORM_POWER_CONFIG IfxBtPlatformPowerConfig = {
+    (ULONG)sizeof(IFXBT_PLATFORM_POWER_CONFIG),
+    TODO_REAL_POWER_OWNERSHIP, // TODO_REAL_POWER_OWNERSHIP
+    TODO_REAL_POWER_OWNERSHIP, // TODO_REAL_POWER_OWNERSHIP reset ownership
+    TODO_REAL_POWER_OWNERSHIP, // TODO_REAL_POWER_OWNERSHIP DEV_WAKE ownership
+    TODO_REAL_POWER_OWNERSHIP, // TODO_REAL_POWER_OWNERSHIP HOST_WAKE ownership
+    TODO_REAL_GPIO_BT_REG_ON,  // TODO_REAL_GPIO_BT_REG_ON
+    TODO_REAL_GPIO_RESET,      // TODO_REAL_GPIO_RESET
+    TODO_REAL_GPIO_DEV_WAKE,   // TODO_REAL_GPIO_DEV_WAKE
+    TODO_REAL_GPIO_HOST_WAKE,  // TODO_REAL_GPIO_HOST_WAKE
+    TODO_REAL_GPIO_POLARITY,   // TODO_REAL_GPIO_POLARITY
+    TODO_REAL_GPIO_POLARITY,   // TODO_REAL_GPIO_POLARITY
+    TODO_REAL_WAKE_TRIGGER,    // TODO_REAL_WAKE_TRIGGER
+    TODO_REAL_GPIO_POLARITY,   // TODO_REAL_GPIO_POLARITY
+    TODO_REAL_POWER_TIMING,    // TODO_REAL_POWER_TIMING
+    TODO_REAL_POWER_TIMING,    // TODO_REAL_POWER_TIMING
+    TODO_REAL_POWER_TIMING,    // TODO_REAL_POWER_TIMING
+    TODO_REAL_POWER_TIMING,    // TODO_REAL_WAKE_TRIGGER debounce timing
     TRUE
 };
 
@@ -143,6 +178,31 @@ const IFXBT_PLATFORM_UART_CONFIG*
 IfxBtPlatformGetUartConfig(VOID)
 {
     return &IfxBtPlatformUartConfig;
+}
+
+const IFXBT_PLATFORM_POWER_CONFIG*
+IfxBtPlatformGetPowerConfig(VOID)
+{
+    return &IfxBtPlatformPowerConfig;
+}
+
+static
+BOOLEAN
+IfxBtPlatformIsValidPowerOwnership(
+    _In_ IFXBT_POWER_OWNERSHIP Ownership
+    )
+{
+    switch (Ownership) {
+    case IfxBtPowerOwnershipPlaceholderUnknown:
+    case IfxBtPowerOwnershipPlatformOwnedAlwaysOn:
+    case IfxBtPowerOwnershipAcpiPowerResourceOwned:
+    case IfxBtPowerOwnershipDriverControlledGpio:
+    case IfxBtPowerOwnershipNotPresentOptional:
+        return TRUE;
+
+    default:
+        return FALSE;
+    }
 }
 
 NTSTATUS
@@ -316,6 +376,69 @@ Exit:
     return Status;
 }
 
+NTSTATUS
+IfxBtPlatformValidatePowerConfig(
+    _In_ const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig
+    )
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_CONFIG validate entry powerConfig=%p",
+            PowerConfig));
+
+    if (PowerConfig == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (PowerConfig->Size != (ULONG)sizeof(IFXBT_PLATFORM_POWER_CONFIG)) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (PowerConfig->RegOnGpioPlaceholderName == NULL ||
+        PowerConfig->ResetGpioPlaceholderName == NULL ||
+        PowerConfig->DevWakeGpioPlaceholderName == NULL ||
+        PowerConfig->HostWakeGpioPlaceholderName == NULL) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (!IfxBtPlatformIsValidPowerOwnership(PowerConfig->PowerOwnership) ||
+        !IfxBtPlatformIsValidPowerOwnership(PowerConfig->ResetOwnership) ||
+        !IfxBtPlatformIsValidPowerOwnership(PowerConfig->DevWakeOwnership) ||
+        !IfxBtPlatformIsValidPowerOwnership(PowerConfig->HostWakeOwnership)) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Exit;
+    }
+
+    if (PowerConfig->PlaceholderPowerConfig) {
+        Status = STATUS_DEVICE_NOT_READY;
+        goto Exit;
+    }
+
+    if (PowerConfig->PowerOwnership == IfxBtPowerOwnershipPlaceholderUnknown ||
+        PowerConfig->ResetOwnership == IfxBtPowerOwnershipPlaceholderUnknown ||
+        PowerConfig->DevWakeOwnership == IfxBtPowerOwnershipPlaceholderUnknown ||
+        PowerConfig->HostWakeOwnership == IfxBtPowerOwnershipPlaceholderUnknown) {
+        Status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        goto Exit;
+    }
+
+Exit:
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_CONFIG validate exit status=%!STATUS!",
+                Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER_CONFIG validate exit status=%!STATUS!",
+                Status));
+    }
+
+    return Status;
+}
+
 static
 VOID
 IfxBtPlatformLogMissingUartPlaceholders(VOID)
@@ -369,6 +492,66 @@ IfxBtPlatformLogUartConfig(
 }
 
 VOID
+IfxBtPlatformLogPowerConfig(
+    _In_ const IFXBT_PLATFORM_POWER_CONFIG* PowerConfig
+    )
+{
+    PCWSTR RegOnGpioPlaceholder;
+    PCWSTR ResetGpioPlaceholder;
+    PCWSTR DevWakeGpioPlaceholder;
+    PCWSTR HostWakeGpioPlaceholder;
+
+    if (PowerConfig == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_POWER, ("POWER_CONTRACT missing power config"));
+        return;
+    }
+
+    RegOnGpioPlaceholder =
+        (PowerConfig->RegOnGpioPlaceholderName != NULL) ?
+            PowerConfig->RegOnGpioPlaceholderName :
+            L"<null>";
+    ResetGpioPlaceholder =
+        (PowerConfig->ResetGpioPlaceholderName != NULL) ?
+            PowerConfig->ResetGpioPlaceholderName :
+            L"<null>";
+    DevWakeGpioPlaceholder =
+        (PowerConfig->DevWakeGpioPlaceholderName != NULL) ?
+            PowerConfig->DevWakeGpioPlaceholderName :
+            L"<null>";
+    HostWakeGpioPlaceholder =
+        (PowerConfig->HostWakeGpioPlaceholderName != NULL) ?
+            PowerConfig->HostWakeGpioPlaceholderName :
+            L"<null>";
+
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT ownership=%d placeholder=%d",
+            PowerConfig->PowerOwnership,
+            PowerConfig->PlaceholderPowerConfig ? 1 : 0));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT reset_ownership=%d dev_wake_ownership=%d host_wake_ownership=%d",
+            PowerConfig->ResetOwnership,
+            PowerConfig->DevWakeOwnership,
+            PowerConfig->HostWakeOwnership));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT reg_on_placeholder=%S",
+            RegOnGpioPlaceholder));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT reset_placeholder=%S",
+            ResetGpioPlaceholder));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT dev_wake_placeholder=%S",
+            DevWakeGpioPlaceholder));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT host_wake_placeholder=%S",
+            HostWakeGpioPlaceholder));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT polarity_placeholder reg_on=%d reset=%d dev_wake=%d host_wake_trigger=%lu",
+            PowerConfig->RegOnActiveHighPlaceholder ? 1 : 0,
+            PowerConfig->ResetActiveHighPlaceholder ? 1 : 0,
+            PowerConfig->DevWakeActiveHighPlaceholder ? 1 : 0,
+            PowerConfig->HostWakeInterruptPolarityPlaceholder));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT timing_placeholder power_stable_ms=%lu reset_assert_ms=%lu post_reset_ms=%lu host_wake_debounce_ms=%lu",
+            PowerConfig->PowerStableDelayMsPlaceholder,
+            PowerConfig->ResetAssertDelayMsPlaceholder,
+            PowerConfig->PostResetDelayMsPlaceholder,
+            PowerConfig->HostWakeDebounceMsPlaceholder));
+    DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_CONTRACT no_gpio_actions_placeholder=1"));
+}
+
+VOID
 IfxBtPlatformLogPowerPlaceholderConfig(
     _In_ const IFXBT_PLATFORM_CONFIG* Config
     )
@@ -390,6 +573,8 @@ IfxBtPlatformLogPowerPlaceholderConfig(
 
     DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER_PLACEHOLDER power resources are placeholder-only state=%d no GPIO operations performed",
             Config->PowerResourceState));
+
+    IfxBtPlatformLogPowerConfig(IfxBtPlatformGetPowerConfig());
 
     DoTrace(LEVEL_WARNING, TFLAG_POWER, ("GPIO_PLACEHOLDER symbolic_only reset=%S reg_on=%S host_wake=%S dev_wake=%S",
             ResetGpioPlaceholder,
