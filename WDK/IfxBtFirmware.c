@@ -86,6 +86,8 @@ IfxBtFirmwareValidateContractShape(
 #pragma alloc_text(PAGE, IfxBtFirmwareValidateContract)
 #pragma alloc_text(PAGE, IfxBtFirmwareLogContract)
 #pragma alloc_text(PAGE, IfxBtFirmwareEvaluateInitialization)
+#pragma alloc_text(PAGE, IfxBtFirmwareValidateControllerReadyPlaceholder)
+#pragma alloc_text(PAGE, IfxBtFirmwareLogControllerReadyPlaceholder)
 #pragma alloc_text(PAGE, IfxBtFirmwareValidatePlaceholderState)
 #pragma alloc_text(PAGE, IfxBtFirmwareLogPlaceholderState)
 #endif
@@ -482,6 +484,72 @@ Failed:
 
     DoTrace(LEVEL_INFO, TFLAG_HCI, ("FW_INIT evaluate exit status=%!STATUS!",
             Status));
+
+    return Status;
+}
+
+VOID
+IfxBtFirmwareLogControllerReadyPlaceholder(
+    _In_ const IFXBT_FIRMWARE_CONTRACT* FirmwareContract
+    )
+{
+    PAGED_CODE();
+
+    if (FirmwareContract == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("CTRL_READY missing firmware contract"));
+        DoTrace(LEVEL_WARNING, TFLAG_HCI, ("CTRL_READY no_hci_commands_sent_placeholder=1"));
+        DoTrace(LEVEL_WARNING, TFLAG_HCI, ("CTRL_READY no_response_wait_placeholder=1"));
+        return;
+    }
+
+    DoTrace(LEVEL_WARNING, TFLAG_HCI, ("CTRL_READY validation_replacement=%S",
+            FirmwareContract->ControllerReadyValidationReplacement));
+    DoTrace(LEVEL_WARNING, TFLAG_HCI, ("CTRL_READY no_hci_commands_sent_placeholder=1"));
+    DoTrace(LEVEL_WARNING, TFLAG_HCI, ("CTRL_READY no_response_wait_placeholder=1"));
+}
+
+NTSTATUS
+IfxBtFirmwareValidateControllerReadyPlaceholder(
+    _In_ const IFXBT_PLATFORM_CONFIG* PlatformConfig,
+    _In_ const IFXBT_FIRMWARE_CONTRACT* FirmwareContract
+    )
+{
+    NTSTATUS Status;
+
+    PAGED_CODE();
+
+    DoTrace(LEVEL_INFO, TFLAG_HCI, ("CTRL_READY validate_placeholder entry platformConfig=%p firmwareContract=%p",
+            PlatformConfig, FirmwareContract));
+
+    Status = IfxBtPlatformValidateConfig(PlatformConfig);
+    if (!NT_SUCCESS(Status)) {
+        goto Exit;
+    }
+
+    Status = IfxBtFirmwareValidateContractShape(FirmwareContract);
+    if (!NT_SUCCESS(Status)) {
+        goto Exit;
+    }
+
+    IfxBtFirmwareLogControllerReadyPlaceholder(FirmwareContract);
+
+    Status = STATUS_DEVICE_NOT_READY;
+    DoTrace(LEVEL_WARNING, TFLAG_HCI, ("CTRL_READY placeholder_blocking_validation status=%!STATUS!",
+            Status));
+
+Exit:
+
+    IfxBtFirmwareLogInitStage(IfxBtFirmwareStageValidateControllerReady,
+                              Status);
+
+    if (!NT_SUCCESS(Status)) {
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("CTRL_READY validate_placeholder exit status=%!STATUS!",
+                Status));
+    }
+    else {
+        DoTrace(LEVEL_INFO, TFLAG_HCI, ("CTRL_READY validate_placeholder exit status=%!STATUS!",
+                Status));
+    }
 
     return Status;
 }

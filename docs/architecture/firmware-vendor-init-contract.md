@@ -74,6 +74,47 @@ No firmware blob is loaded, no parser runs, no vendor command is sent, no HCI
 Reset is sent, no response wait loop runs, no baud switch occurs, and no
 controller validation packet is sent.
 
+## Phase 18B Parent Readiness Scaffold
+
+Parent transport readiness is intentionally stricter than UART-open readiness.
+The final parent sequence is:
+
+1. `IfxBtTransportStateResourcesParsed`
+2. `IfxBtTransportStateUartOpened`
+3. `IfxBtTransportStateUartConfigured`
+4. `IfxBtTransportStatePlatformPowered`
+5. `IfxBtTransportStateFirmwareReady`
+6. `IfxBtTransportStateBaudSynchronized`
+7. `IfxBtTransportStateControllerReady`
+8. `IfxBtTransportStateOperational`
+
+Child PDO exposure remains gated on `Operational`, `IfxBtFailureNone`,
+`DeviceInitialized == TRUE`, and a non-null UART I/O target. `Operational` must
+not be reached while any placeholder contract is active.
+
+Controller-ready validation is a separate proof after firmware/vendor init and
+baud synchronization. Firmware/vendor init changes or prepares controller state;
+controller-ready validation proves the final parent transport can exchange a
+known-good standard HCI transaction at the expected baud before the child stack
+owns HCI traffic.
+
+Phase 18B adds only a placeholder controller-ready gate. It returns
+`STATUS_DEVICE_NOT_READY`, maps to
+`IfxBtFailureControllerValidationPlaceholder`, and logs:
+
+```text
+CTRL_READY placeholder_blocking_validation status=%!STATUS!
+CTRL_READY no_hci_commands_sent_placeholder=1
+CTRL_READY no_response_wait_placeholder=1
+IFXBT_READY operational_not_reached_placeholder=1
+```
+
+No HCI command is sent, no HCI Reset is sent, no response wait loop is started,
+and no controller-ready success is reported from placeholders. Future timeout
+and unexpected-event failures should map to `STATUS_IO_TIMEOUT` or
+`STATUS_INVALID_DEVICE_RESPONSE` with
+`IfxBtFailureControllerValidationFailed`.
+
 ## Command/Response Engine Principle
 
 The eventual vendor init engine should be private to the parent transport and

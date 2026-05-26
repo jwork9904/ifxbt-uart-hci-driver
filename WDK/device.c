@@ -864,24 +864,26 @@ Return Value:
 
 --*/    
 {
-    BOOLEAN Initialized = TRUE;
+    BOOLEAN Initialized = FALSE;
     const IFXBT_PLATFORM_CONFIG* PlatformConfig;
     const IFXBT_PLATFORM_UART_CONFIG* UartConfig;
     const IFXBT_FIRMWARE_CONTRACT* FirmwareContract;
+    IFXBT_FAILURE_REASON FailureReason;
     NTSTATUS PlatformStatus;
     NTSTATUS FirmwareStatus;
     NTSTATUS UartStatus;
     NTSTATUS PowerStatus;
+    NTSTATUS ControllerStatus;
 
     DoTrace(LEVEL_INFO, TFLAG_UART, ("DEVICE_STUB DeviceInitialize entry fdoExtension=%p ioTarget=%p request=%p isUartReset=%d",
             _FdoExtension, _IoTargetSerial, _RequestSync, _IsUartReset));
 
     if (_FdoExtension == NULL || _IoTargetSerial == NULL || _RequestSync == NULL)
     {
-        Initialized = FALSE;
         if (_FdoExtension != NULL) {
-            _FdoExtension->LastFailureReason = IfxBtFailureUartConfigFailed;
-            _FdoExtension->LastFailureStatus = STATUS_INVALID_PARAMETER;
+            IfxBtSetTransportFailure(_FdoExtension,
+                                     IfxBtFailureUartConfigFailed,
+                                     STATUS_INVALID_PARAMETER);
         }
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize missing required context fdoExtension=%p ioTarget=%p request=%p",
                 _FdoExtension, _IoTargetSerial, _RequestSync));
@@ -892,7 +894,9 @@ Return Value:
     PlatformStatus = IfxBtPlatformValidateConfig(PlatformConfig);
     if (!NT_SUCCESS(PlatformStatus))
     {
-        Initialized = FALSE;
+        IfxBtSetTransportFailure(_FdoExtension,
+                                 IfxBtFailureUartConfigFailed,
+                                 PlatformStatus);
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize platform config validation failed status=%!STATUS!",
                 PlatformStatus));
         goto Exit;
@@ -913,42 +917,97 @@ Return Value:
                                     _IsUartReset);
     if (!NT_SUCCESS(UartStatus))
     {
-        Initialized = FALSE;
         if (UartConfig != NULL &&
             UartConfig->PlaceholderUartConfig &&
             UartStatus == STATUS_DEVICE_NOT_READY) {
-            _FdoExtension->LastFailureReason = IfxBtFailureUartConfigPlaceholder;
+            FailureReason = IfxBtFailureUartConfigPlaceholder;
         }
         else {
-            _FdoExtension->LastFailureReason = IfxBtFailureUartConfigFailed;
+            FailureReason = IfxBtFailureUartConfigFailed;
         }
-        _FdoExtension->LastFailureStatus = UartStatus;
+        IfxBtSetTransportFailure(_FdoExtension,
+                                 FailureReason,
+                                 UartStatus);
         DoTrace(LEVEL_ERROR, TFLAG_UART, ("DEVICE_STUB DeviceInitialize UART configuration pending or failed status=%!STATUS!",
                 UartStatus));
         goto Exit;
     }
 
+    IfxBtSetTransportState(_FdoExtension,
+                           IfxBtTransportStateUartConfigured,
+                           UartStatus);
+
     PowerStatus = IfxBtPowerOnController(_FdoExtension->WdfDevice,
                                          L"DeviceInitializePowerReadiness");
     if (!NT_SUCCESS(PowerStatus))
     {
-        Initialized = FALSE;
+        if (_FdoExtension->LastFailureReason == IfxBtFailureNone) {
+            IfxBtSetTransportFailure(_FdoExtension,
+                                     IfxBtFailurePowerSequenceFailed,
+                                     PowerStatus);
+        }
         DoTrace(LEVEL_ERROR, TFLAG_POWER, ("DEVICE_STUB DeviceInitialize power readiness failed status=%!STATUS!",
                 PowerStatus));
         goto Exit;
     }
 
+    IfxBtSetTransportState(_FdoExtension,
+                           IfxBtTransportStatePlatformPowered,
+                           PowerStatus);
+
     FirmwareStatus = IfxBtFirmwareEvaluateInitialization(PlatformConfig,
                                                          FirmwareContract);
     if (!NT_SUCCESS(FirmwareStatus))
     {
-        Initialized = FALSE;
-        _FdoExtension->LastFailureReason = IfxBtFailureFirmwareSequencePlaceholder;
-        _FdoExtension->LastFailureStatus = FirmwareStatus;
+        if (FirmwareStatus == STATUS_DEVICE_NOT_READY &&
+            FirmwareContract != NULL &&
+            FirmwareContract->PlaceholderFirmwareContract) {
+            FailureReason = IfxBtFailureFirmwareSequencePlaceholder;
+        }
+        else {
+            FailureReason = IfxBtFailureVendorCommandFailed;
+        }
+        IfxBtSetTransportFailure(_FdoExtension,
+                                 FailureReason,
+                                 FirmwareStatus);
         DoTrace(LEVEL_ERROR, TFLAG_HCI, ("DEVICE_STUB DeviceInitialize firmware/vendor initialization blocked status=%!STATUS!",
                 FirmwareStatus));
         goto Exit;
     }
+
+    IfxBtSetTransportState(_FdoExtension,
+                           IfxBtTransportStateFirmwareReady,
+                           FirmwareStatus);
+    IfxBtSetTransportState(_FdoExtension,
+                           IfxBtTransportStateBaudSynchronized,
+                           FirmwareStatus);
+
+    ControllerStatus = IfxBtFirmwareValidateControllerReadyPlaceholder(PlatformConfig,
+                                                                       FirmwareContract);
+    if (!NT_SUCCESS(ControllerStatus))
+    {
+        if (ControllerStatus == STATUS_DEVICE_NOT_READY) {
+            FailureReason = IfxBtFailureControllerValidationPlaceholder;
+            DoTrace(LEVEL_WARNING, TFLAG_PNP, ("IFXBT_READY operational_not_reached_placeholder=1"));
+        }
+        else {
+            FailureReason = IfxBtFailureControllerValidationFailed;
+        }
+        IfxBtSetTransportFailure(_FdoExtension,
+                                 FailureReason,
+                                 ControllerStatus);
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("DEVICE_STUB DeviceInitialize controller-ready validation blocked status=%!STATUS!",
+                ControllerStatus));
+        goto Exit;
+    }
+
+    IfxBtSetTransportState(_FdoExtension,
+                           IfxBtTransportStateControllerReady,
+                           ControllerStatus);
+    IfxBtSetTransportState(_FdoExtension,
+                           IfxBtTransportStateOperational,
+                           ControllerStatus);
+    Initialized = TRUE;
 
 Exit:
 
@@ -1098,9 +1157,18 @@ Return Value:
 
 --*/
 {
+    PFDO_EXTENSION FdoExtension = NULL;
     NTSTATUS Status;
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("DEVICE_STUB DeviceDoPLDR entry fdo=%p", _Fdo));
+
+    if (_Fdo != NULL) {
+        FdoExtension = FdoGetExtension(_Fdo);
+        IfxBtInvalidateParentReadiness(FdoExtension,
+                                       IfxBtTransportStateRecovering,
+                                       STATUS_SUCCESS,
+                                       L"PLDR");
+    }
 
     IfxBtDeviceLogPowerPlaceholderState(L"DeviceDoPLDR");
 

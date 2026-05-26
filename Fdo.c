@@ -166,7 +166,6 @@ Done:
     return Status;
 }
 
-static
 VOID
 IfxBtSetTransportState(
     _Inout_opt_ PFDO_EXTENSION FdoExtension,
@@ -195,6 +194,47 @@ IfxBtSetTransportState(
     }
 }
 
+VOID
+IfxBtInvalidateParentReadiness(
+    _Inout_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ IFXBT_TRANSPORT_STATE NewState,
+    _In_ NTSTATUS Status,
+    _In_ PCWSTR Reason
+    )
+{
+    IFXBT_TRANSPORT_STATE OldState;
+    PCWSTR ReasonText;
+
+    if (FdoExtension == NULL) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_READY_INVALIDATE missing_context reason=%S status=%!STATUS!",
+                (Reason != NULL) ? Reason : L"<unspecified>",
+                Status));
+        return;
+    }
+
+    if (NewState == IfxBtTransportStateOperational) {
+        DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_READY_INVALIDATE refused_operational_target status=%!STATUS!",
+                Status));
+        NewState = IfxBtTransportStateStopping;
+    }
+
+    OldState = FdoExtension->TransportState;
+    ReasonText = (Reason != NULL) ? Reason : L"<unspecified>";
+
+    FdoExtension->DeviceInitialized = FALSE;
+
+    DoTrace(LEVEL_WARNING, TFLAG_PNP, ("IFXBT_READY_INVALIDATE reason=%S old_state=%d new_state=%d last_reason=%d status=%!STATUS!",
+            ReasonText,
+            OldState,
+            NewState,
+            FdoExtension->LastFailureReason,
+            Status));
+
+    IfxBtSetTransportState(FdoExtension,
+                           NewState,
+                           Status);
+}
+
 static
 VOID
 IfxBtSetFailureReason(
@@ -207,6 +247,11 @@ IfxBtSetFailureReason(
         DoTrace(LEVEL_ERROR, TFLAG_PNP, ("IFXBT_FAIL missing_context reason=%d status=%!STATUS!",
                 Reason, Status));
         return;
+    }
+
+    if (Reason != IfxBtFailureNone &&
+        NT_SUCCESS(Status)) {
+        Status = STATUS_DEVICE_NOT_READY;
     }
 
     FdoExtension->LastFailureReason = Reason;
@@ -222,9 +267,10 @@ IfxBtSetFailureReason(
     }
 
     if (Reason != IfxBtFailureNone) {
-        IfxBtSetTransportState(FdoExtension,
-                               IfxBtTransportStateFailed,
-                               Status);
+        IfxBtInvalidateParentReadiness(FdoExtension,
+                                       IfxBtTransportStateFailed,
+                                       Status,
+                                       L"failure");
     }
 }
 
@@ -1557,6 +1603,11 @@ Return Value:
 
     FdoExtension = FdoGetExtension(_Device);
 
+    IfxBtInvalidateParentReadiness(FdoExtension,
+                                   IfxBtTransportStateCreated,
+                                   STATUS_SUCCESS,
+                                   L"ReleaseHardware");
+
     if (FdoExtension->IoTargetSerial)
     {
         DoTrace(LEVEL_INFO, TFLAG_UART,("UART_OPEN FdoDevReleaseHardware delete ioTarget=%p", FdoExtension->IoTargetSerial));
@@ -1696,9 +1747,7 @@ Return Value:
 {
     PFDO_EXTENSION FdoExtension = FdoGetExtension(_Device);
     NTSTATUS       Status = STATUS_SUCCESS;
-#ifdef REQUIRE_REINITIALIZE
     IFXBT_FAILURE_REASON FailureReason;
-#endif
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Entry entry device=%p previousState=%d initialized=%d",
             _Device, _PreviousState, IsDeviceInitialized(FdoExtension)));
@@ -1732,7 +1781,9 @@ Return Value:
         // was lost, but the assumption here is that the UART controller driver does save and
         // restore its context.
         //
-#ifdef REQUIRE_REINITIALIZE
+#ifndef REQUIRE_REINITIALIZE
+        DoTrace(LEVEL_WARNING, TFLAG_POWER, ("POWER FdoDevD0Entry firmware retention unknown rebuilding parent readiness"));
+#endif
 
         // Reinitialize serial bus device
         FdoExtension->DeviceInitialized = DeviceInitialize(FdoExtension,
@@ -1759,15 +1810,13 @@ Return Value:
             goto Done;
         }
 
-#else
-        // Set to TRUE in order to restart the read pump
-        FdoExtension->DeviceInitialized = TRUE;
-#endif
-
         // Restart the IOTarget to receiving request
         Status = WdfIoTargetStart(FdoExtension->IoTargetSerial);
         if (!NT_SUCCESS(Status)) {
             DoTrace(LEVEL_ERROR, TFLAG_UART, ("UART_OPEN FdoDevD0Entry WdfIoTargetStart failed status=%!STATUS!", Status));
+            IfxBtSetTransportFailure(FdoExtension,
+                                     IfxBtFailureSerialError,
+                                     Status);
             goto Done;
         }
 
@@ -1780,6 +1829,9 @@ Return Value:
                               INITIAL_H4_READ_SIZE);
         if (!NT_SUCCESS(Status)) {
             DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevD0Entry ReadH4Packet failed status=%!STATUS!", Status));
+            IfxBtSetTransportFailure(FdoExtension,
+                                     IfxBtFailureReadPumpFailed,
+                                     Status);
             goto Done;
         }
     }
@@ -1826,6 +1878,11 @@ Return Value:
 
     DoTrace(LEVEL_INFO, TFLAG_POWER, ("POWER FdoDevD0Exit entry device=%p targetState=%d", _Device, _TargetState));
 
+    IfxBtInvalidateParentReadiness(FdoExtension,
+                                   IfxBtTransportStateStopping,
+                                   STATUS_SUCCESS,
+                                   L"D0Exit");
+
     // Cancel IO requests that are already in the IO queue,
     // wait for their completion before this function is returned.
     // Can restart this queue at later time.
@@ -1838,7 +1895,6 @@ Return Value:
         WdfObjectDelete(FdoExtension->IoTargetGPIO);
         FdoExtension->IoTargetGPIO = NULL;
     }
-    FdoExtension->DeviceInitialized = FALSE;
 
     //
     // Note: Do not delete the UART's IoTarget.

@@ -163,6 +163,7 @@ typedef enum _IFXBT_TRANSPORT_STATE {
     IfxBtTransportStatePlatformPowered,
     IfxBtTransportStateFirmwareReady,
     IfxBtTransportStateBaudSynchronized,
+    IfxBtTransportStateControllerReady,
     IfxBtTransportStateOperational,
     IfxBtTransportStateStopping,
     IfxBtTransportStateRecovering,
@@ -182,6 +183,7 @@ typedef enum _IFXBT_FAILURE_REASON {
     IfxBtFailureVendorCommandFailed,
     IfxBtFailureFirmwareResponseTimeout,
     IfxBtFailureBaudSwitchFailed,
+    IfxBtFailureControllerValidationPlaceholder,
     IfxBtFailureControllerValidationFailed,
     IfxBtFailureH4Desync,
     IfxBtFailureSerialError,
@@ -410,9 +412,20 @@ DRIVER_INITIALIZE DriverEntry;
 //
 
 VOID
+IfxBtSetTransportState(_Inout_opt_ PFDO_EXTENSION FdoExtension,
+                       _In_ IFXBT_TRANSPORT_STATE NewState,
+                       _In_ NTSTATUS Status);
+
+VOID
 IfxBtSetTransportFailure(_Inout_opt_ PFDO_EXTENSION FdoExtension,
                          _In_ IFXBT_FAILURE_REASON Reason,
                          _In_ NTSTATUS Status);
+
+VOID
+IfxBtInvalidateParentReadiness(_Inout_opt_ PFDO_EXTENSION FdoExtension,
+                               _In_ IFXBT_TRANSPORT_STATE NewState,
+                               _In_ NTSTATUS Status,
+                               _In_ PCWSTR Reason);
 
 NTSTATUS
 HlpInitializeFdoExtension(WDFDEVICE   _Device);

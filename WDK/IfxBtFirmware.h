@@ -126,6 +126,17 @@ IfxBtFirmwareEvaluateInitialization(
     );
 
 NTSTATUS
+IfxBtFirmwareValidateControllerReadyPlaceholder(
+    _In_ const IFXBT_PLATFORM_CONFIG* PlatformConfig,
+    _In_ const IFXBT_FIRMWARE_CONTRACT* FirmwareContract
+    );
+
+VOID
+IfxBtFirmwareLogControllerReadyPlaceholder(
+    _In_ const IFXBT_FIRMWARE_CONTRACT* FirmwareContract
+    );
+
+NTSTATUS
 IfxBtFirmwareValidatePlaceholderState(
     _In_ const IFXBT_PLATFORM_CONFIG* PlatformConfig
     );

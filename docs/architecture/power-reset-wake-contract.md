@@ -88,6 +88,20 @@ DeviceDisableWakeControl
 rollback after failed staged power-on
 ```
 
+Phase 18B invalidates parent readiness on D0 exit, hardware release, and
+parent-side PLDR/reset entry. Invalidation clears `DeviceInitialized`, moves the
+transport out of `Operational`, and logs:
+
+```text
+IFXBT_READY_INVALIDATE reason=...
+```
+
+Normal teardown invalidation does not invent a new failure reason. Failure paths
+preserve the root failure reason and move the transport to
+`IfxBtTransportStateFailed`. Because CYW55571 D3 firmware retention is still
+unknown, D0 entry must rebuild readiness instead of treating pre-D3
+`Operational` as still valid.
+
 The placeholder path emits `POWER_CONTRACT no_gpio_actions_placeholder=1` and
 the operation-specific blocking trace, such as
 `POWER_CONFIG placeholder_blocking_power_on`,
