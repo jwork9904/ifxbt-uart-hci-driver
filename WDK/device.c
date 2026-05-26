@@ -867,6 +867,7 @@ Return Value:
     BOOLEAN Initialized = TRUE;
     const IFXBT_PLATFORM_CONFIG* PlatformConfig;
     const IFXBT_PLATFORM_UART_CONFIG* UartConfig;
+    const IFXBT_FIRMWARE_CONTRACT* FirmwareContract;
     NTSTATUS PlatformStatus;
     NTSTATUS FirmwareStatus;
     NTSTATUS UartStatus;
@@ -899,19 +900,13 @@ Return Value:
 
     IfxBtPlatformLogConfig(PlatformConfig);
     UartConfig = IfxBtPlatformGetUartConfig();
+    FirmwareContract = IfxBtFirmwareGetContract();
 
-    FirmwareStatus = IfxBtFirmwareValidatePlaceholderState(PlatformConfig);
-    if (!NT_SUCCESS(FirmwareStatus))
-    {
-        Initialized = FALSE;
-        _FdoExtension->LastFailureReason = IfxBtFailureFirmwareSequencePlaceholder;
-        _FdoExtension->LastFailureStatus = FirmwareStatus;
-        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("DEVICE_STUB DeviceInitialize firmware placeholder validation failed status=%!STATUS!",
-                FirmwareStatus));
-        goto Exit;
-    }
-
-    IfxBtFirmwareLogPlaceholderState(PlatformConfig);
+    //
+    // Log the firmware/vendor contract early, but do not evaluate readiness
+    // until the initial UART and power-readiness gates have succeeded.
+    //
+    IfxBtFirmwareLogContract(FirmwareContract);
 
     UartStatus = IfxBtConfigureUart(_FdoExtension,
                                     PlatformConfig,
@@ -940,6 +935,18 @@ Return Value:
         Initialized = FALSE;
         DoTrace(LEVEL_ERROR, TFLAG_POWER, ("DEVICE_STUB DeviceInitialize power readiness failed status=%!STATUS!",
                 PowerStatus));
+        goto Exit;
+    }
+
+    FirmwareStatus = IfxBtFirmwareEvaluateInitialization(PlatformConfig,
+                                                         FirmwareContract);
+    if (!NT_SUCCESS(FirmwareStatus))
+    {
+        Initialized = FALSE;
+        _FdoExtension->LastFailureReason = IfxBtFailureFirmwareSequencePlaceholder;
+        _FdoExtension->LastFailureStatus = FirmwareStatus;
+        DoTrace(LEVEL_ERROR, TFLAG_HCI, ("DEVICE_STUB DeviceInitialize firmware/vendor initialization blocked status=%!STATUS!",
+                FirmwareStatus));
         goto Exit;
     }
 
