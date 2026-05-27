@@ -285,6 +285,27 @@ IfxBtSetTransportFailure(
 }
 
 static
+NTSTATUS
+IfxBtPreserveLatchedFailureStatus(
+    _In_opt_ PFDO_EXTENSION FdoExtension,
+    _In_ NTSTATUS DefaultStatus
+    )
+{
+    NTSTATUS Status = DefaultStatus;
+
+    if (FdoExtension != NULL &&
+        FdoExtension->LastFailureReason != IfxBtFailureNone &&
+        !NT_SUCCESS(FdoExtension->LastFailureStatus)) {
+        Status = FdoExtension->LastFailureStatus;
+        DoTrace(LEVEL_WARNING, TFLAG_PNP, ("ORCH preserve_latched_failure reason=%d status=%!STATUS!",
+                FdoExtension->LastFailureReason,
+                Status));
+    }
+
+    return Status;
+}
+
+static
 BOOLEAN
 IfxBtIsParentTransportReady(
     _In_opt_ PFDO_EXTENSION FdoExtension
@@ -1449,6 +1470,9 @@ Return Value:
     if (!NT_SUCCESS(Status))
     {
         DoTrace(LEVEL_ERROR, TFLAG_PNP, ("PNP FdoDevPrepareHardware HlpInitializeFdoExtension failed status=%!STATUS!", Status));
+        IfxBtSetTransportFailure(FdoExtension,
+                                 IfxBtFailureUartConfigFailed,
+                                 Status);
         goto Exit;
     }
 
@@ -1496,12 +1520,9 @@ Return Value:
         if (FailureReason == IfxBtFailureNone) {
             FailureReason = IfxBtFailureUartConfigFailed;
         }
-        else if (FailureReason == IfxBtFailurePowerResourcesPlaceholder ||
-                 FailureReason == IfxBtFailurePowerSequenceFailed) {
-            Status = FdoExtension->LastFailureStatus;
-            if (NT_SUCCESS(Status)) {
-                Status = STATUS_DEVICE_NOT_READY;
-            }
+        else {
+            Status = IfxBtPreserveLatchedFailureStatus(FdoExtension,
+                                                       Status);
         }
         IfxBtSetFailureReason(FdoExtension,
                               FailureReason,
@@ -1648,6 +1669,8 @@ Return Value:
 
     DoTrace(LEVEL_INFO, TFLAG_PNP,("PNP FdoDevSelfManagedIoInit entry device=%p", _Device));
 
+    FdoExtension = FdoGetExtension(_Device);
+
     //
     // Preallocate resources needed to perform read opeations
     //
@@ -1655,11 +1678,14 @@ Return Value:
 
     if (!NT_SUCCESS(Status)) {
         DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevSelfManagedIoInit ReadResourcesAllocate failed status=%!STATUS!", Status));
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("ORCH read_pump_start_failed status=%!STATUS!", Status));
+        IfxBtSetTransportFailure(FdoExtension,
+                                 IfxBtFailureReadPumpFailed,
+                                 Status);
         goto Exit;
     }
 
     // Issue pending IO request to prefetch HCI event and data
-    FdoExtension = FdoGetExtension(_Device);
     FdoExtension->ReadContext.RequestState = REQUEST_COMPLETE;
 
     // Start the read pump
@@ -1672,6 +1698,11 @@ Return Value:
 
     if (!NT_SUCCESS(Status)) {
         DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevSelfManagedIoInit ReadH4Packet failed status=%!STATUS!", Status));
+        FdoExtension->ReadPumpRunning = FALSE;
+        DoTrace(LEVEL_ERROR, TFLAG_IO, ("ORCH read_pump_start_failed status=%!STATUS!", Status));
+        IfxBtSetTransportFailure(FdoExtension,
+                                 IfxBtFailureReadPumpFailed,
+                                 Status);
         goto Exit;
     }
 
@@ -1796,12 +1827,9 @@ Return Value:
             if (FailureReason == IfxBtFailureNone) {
                 FailureReason = IfxBtFailureUartConfigFailed;
             }
-            else if (FailureReason == IfxBtFailurePowerResourcesPlaceholder ||
-                     FailureReason == IfxBtFailurePowerSequenceFailed) {
-                Status = FdoExtension->LastFailureStatus;
-                if (NT_SUCCESS(Status)) {
-                    Status = STATUS_DEVICE_NOT_READY;
-                }
+            else {
+                Status = IfxBtPreserveLatchedFailureStatus(FdoExtension,
+                                                           Status);
             }
             IfxBtSetFailureReason(FdoExtension,
                                   FailureReason,
@@ -1822,6 +1850,7 @@ Return Value:
 
         // Restart read pump
         DoTrace(LEVEL_INFO, TFLAG_IO, ("UART_READ FdoDevD0Entry restarting read pump"));
+        FdoExtension->ReadPumpRunning = TRUE;
         Status = ReadH4Packet(&FdoExtension->ReadContext,
                               FdoExtension->ReadRequest,
                               FdoExtension->ReadMemory,
@@ -1829,6 +1858,8 @@ Return Value:
                               INITIAL_H4_READ_SIZE);
         if (!NT_SUCCESS(Status)) {
             DoTrace(LEVEL_ERROR, TFLAG_IO, ("UART_READ FdoDevD0Entry ReadH4Packet failed status=%!STATUS!", Status));
+            FdoExtension->ReadPumpRunning = FALSE;
+            DoTrace(LEVEL_ERROR, TFLAG_IO, ("ORCH read_pump_restart_failed status=%!STATUS!", Status));
             IfxBtSetTransportFailure(FdoExtension,
                                      IfxBtFailureReadPumpFailed,
                                      Status);
